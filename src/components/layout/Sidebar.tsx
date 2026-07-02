@@ -1,0 +1,95 @@
+import { NavLink } from 'react-router-dom'
+import { navItems } from '../../data/mock'
+import { useAuth } from '../../hooks/useAuth'
+import { useSidebar } from '../../hooks/useSidebar'
+import { Icon } from '../ui/Icon'
+import { PrimaryActionButton } from '../ui/PrimaryActionButton'
+
+export function Sidebar() {
+  const { logout } = useAuth()
+  const { open, setOpen } = useSidebar()
+
+  return (
+    <>
+      {open && (
+        <button
+          type="button"
+          aria-label="Cerrar menú"
+          className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden"
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      <aside
+        className={`fixed left-0 top-0 z-50 flex h-full w-sidebar-width flex-col overflow-y-auto border-r border-outline-variant/20 bg-inverse-surface dark:bg-black transition-transform duration-300 ease-in-out lg:translate-x-0 ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="px-lg py-xl">
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="font-headline-sm text-headline-sm font-bold text-primary-fixed dark:text-primary">
+                El Plonsazo
+              </h1>
+              <p className="font-body-sm text-body-sm text-secondary-fixed-dim dark:text-on-surface-variant opacity-70">
+                Suite empresarial
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="Cerrar barra lateral"
+              className="rounded-full p-1 text-inverse-on-surface/70 hover:bg-inverse-on-surface/10 dark:text-on-surface-variant lg:hidden"
+              onClick={() => setOpen(false)}
+            >
+              <Icon name="close" size={20} />
+            </button>
+          </div>
+        </div>
+
+        <nav className="custom-scrollbar flex-1 space-y-xs overflow-y-auto px-md">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              onClick={() => setOpen(false)}
+              className={({ isActive }) =>
+                `flex items-center gap-md px-md py-sm font-body-md text-body-md transition-colors duration-200 ease-in-out ${
+                  isActive
+                    ? 'border-l-2 border-primary bg-primary/10 font-bold text-primary'
+                    : 'border-l-2 border-transparent text-secondary-fixed-dim hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface'
+                }`
+              }
+            >
+              <Icon name={item.icon} filled={item.to === '/chatbot'} />
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="border-t border-outline-variant/20 p-md">
+          <PrimaryActionButton fullWidth size="compact" className="mb-md">
+            Nueva entrada
+          </PrimaryActionButton>
+          <div className="space-y-xs">
+            <button
+              type="button"
+              className="flex w-full items-center gap-md px-md py-sm font-body-md text-body-md text-secondary-fixed-dim transition-colors hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface"
+            >
+              <Icon name="settings" />
+              <span>Configuración</span>
+            </button>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex w-full items-center gap-md px-md py-sm font-body-md text-body-md text-secondary-fixed-dim transition-colors hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface"
+            >
+              <Icon name="logout" />
+              <span>Cerrar sesión</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+    </>
+  )
+}
