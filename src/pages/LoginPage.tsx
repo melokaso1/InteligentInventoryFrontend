@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { Icon } from '../components/ui/Icon'
+import { Logo } from '../components/ui/Logo'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
 import { isLoggedIn, useAuth } from '../hooks/useAuth'
 
@@ -83,8 +84,8 @@ export function LoginPage() {
       <main className="relative z-10 w-full max-w-[440px]">
         <div className="auth-card space-y-lg rounded-lg p-xl">
           <header className="flex flex-col items-center space-y-sm">
-            <div className="flex h-12 w-12 items-center justify-center rounded bg-primary">
-              <Icon name="admin_panel_settings" filled className="text-white dark:text-on-primary" size={28} />
+            <div className="flex items-center justify-center rounded bg-primary-container p-sm">
+              <Logo size="lg" />
             </div>
             <div className="text-center">
               <h1 className="font-headline-md text-headline-md text-on-surface">El Plonsazo</h1>
@@ -163,9 +164,6 @@ export function LoginPage() {
                 </span>
               </div>
             </div>
-            <p className="text-center font-mono-sm text-[11px] uppercase tracking-wider text-on-surface-variant/50">
-              Sistema de Gestión de Recursos Empresariales v4.2.0
-            </p>
           </footer>
         </div>
 

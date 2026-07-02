@@ -3,6 +3,7 @@ import { navItems } from '../../data/mock'
 import { useAuth } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
 import { Icon } from '../ui/Icon'
+import { Logo } from '../ui/Logo'
 import { PrimaryActionButton } from '../ui/PrimaryActionButton'
 
 export function Sidebar() {
@@ -28,10 +29,12 @@ export function Sidebar() {
         <div className="px-lg py-xl">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="font-headline-sm text-headline-sm font-bold text-primary-fixed dark:text-primary">
-                El Plonsazo
-              </h1>
-              <p className="font-body-sm text-body-sm text-secondary-fixed-dim dark:text-on-surface-variant opacity-70">
+              <Logo
+                size="md"
+                showText
+                textClassName="font-headline-md text-headline-md text-primary-fixed dark:text-primary"
+              />
+              <p className="mt-xs font-body-sm text-body-sm text-secondary-fixed-dim dark:text-on-surface-variant opacity-70">
                 Suite empresarial
               </p>
             </div>

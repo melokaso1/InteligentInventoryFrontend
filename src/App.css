@@ -3,58 +3,58 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Executive Precision — light (green) / dark (Executive Precision Dark) */
-  --color-surface: light-dark(#ffffff, #131313);
-  --color-surface-dim: light-dark(#f5f5f5, #131313);
-  --color-surface-bright: light-dark(#fafafa, #393939);
-  --color-surface-container-lowest: light-dark(#f9f9f9, #0e0e0e);
-  --color-surface-container-low: light-dark(#f5f5f5, #1c1b1b);
-  --color-surface-container: light-dark(#eeeeee, #201f1f);
-  --color-surface-container-high: light-dark(#e8e8e8, #2a2a2a);
-  --color-surface-container-highest: light-dark(#e0e0e0, #353534);
-  --color-on-surface: light-dark(#171717, #e5e2e1);
-  --color-on-surface-variant: light-dark(#525252, #c5cdc8);
-  --color-inverse-surface: light-dark(#031106, #e5e2e1);
-  --color-inverse-on-surface: light-dark(#8ea28e, #313030);
-  --color-outline: light-dark(#737373, #85948b);
-  --color-outline-variant: light-dark(#e0e0e0, #3c4a42);
-  --color-surface-tint: light-dark(#39662a, #45dfa4);
-  --color-primary: light-dark(#39662a, #5af0b3);
-  --color-on-primary: light-dark(#d4ffbf, #003825);
-  --color-primary-container: light-dark(#c5faad, #34d399);
-  --color-on-primary-container: light-dark(#356126, #00563b);
-  --color-inverse-primary: light-dark(#c5faad, #006c4b);
-  --color-secondary: light-dark(#5b5b5b, #c0c1ff);
-  --color-on-secondary: light-dark(#f3f3f3, #1000a9);
-  --color-secondary-container: light-dark(#e2e2e2, #3131c0);
-  --color-on-secondary-container: light-dark(#525252, #b0b2ff);
-  --color-tertiary: light-dark(#535c67, #d4d7d9);
-  --color-on-tertiary: light-dark(#ebf3ff, #2d3133);
-  --color-tertiary-container: light-dark(#d8e0ed, #b9bbbd);
-  --color-on-tertiary-container: light-dark(#48515b, #484b4d);
+  /* Cannabis pastels (light) / Executive Precision Dark */
+  --color-surface: light-dark(#faf8f4, #131313);
+  --color-surface-dim: light-dark(#f5f3ee, #131313);
+  --color-surface-bright: light-dark(#faf8f4, #393939);
+  --color-surface-container-lowest: light-dark(#f7f5f0, #0e0e0e);
+  --color-surface-container-low: light-dark(#f5f3ee, #1c1b1b);
+  --color-surface-container: light-dark(#e8f0e4, #201f1f);
+  --color-surface-container-high: light-dark(#dce8d6, #2a2a2a);
+  --color-surface-container-highest: light-dark(#d4edcf, #353534);
+  --color-on-surface: light-dark(#2d3b28, #e5e2e1);
+  --color-on-surface-variant: light-dark(#4a5c44, #c5cdc8);
+  --color-inverse-surface: light-dark(#1a2e16, #e5e2e1);
+  --color-inverse-on-surface: light-dark(#c5d4bc, #313030);
+  --color-outline: light-dark(#c5d4bc, #85948b);
+  --color-outline-variant: light-dark(#dce8d6, #3c4a42);
+  --color-surface-tint: light-dark(#5a8f4a, #45dfa4);
+  --color-primary: light-dark(#5a8f4a, #5af0b3);
+  --color-on-primary: light-dark(#ffffff, #003825);
+  --color-primary-container: light-dark(#d4edcf, #34d399);
+  --color-on-primary-container: light-dark(#2d3b28, #00563b);
+  --color-inverse-primary: light-dark(#b8d4ae, #006c4b);
+  --color-secondary: light-dark(#5c6e56, #c0c1ff);
+  --color-on-secondary: light-dark(#f7f5f0, #1000a9);
+  --color-secondary-container: light-dark(#e8f0e4, #3131c0);
+  --color-on-secondary-container: light-dark(#3d4a38, #b0b2ff);
+  --color-tertiary: light-dark(#5a6b62, #d4d7d9);
+  --color-on-tertiary: light-dark(#f0f4ee, #2d3133);
+  --color-tertiary-container: light-dark(#dce8d6, #b9bbbd);
+  --color-on-tertiary-container: light-dark(#3d4a42, #484b4d);
   --color-error: light-dark(#b31b25, #ffb4ab);
   --color-on-error: light-dark(#ffefee, #690005);
   --color-error-container: light-dark(#fb5151, #93000a);
   --color-on-error-container: light-dark(#570008, #ffdad6);
-  --color-primary-fixed: light-dark(#c5faad, #68fcbf);
-  --color-primary-fixed-dim: light-dark(#b7eba0, #45dfa4);
-  --color-on-primary-fixed: light-dark(#234e15, #002114);
-  --color-on-primary-fixed-variant: light-dark(#3f6c2f, #005137);
-  --color-secondary-fixed: light-dark(#e2e2e2, #e1e0ff);
-  --color-secondary-fixed-dim: light-dark(#d4d4d4, #c0c1ff);
-  --color-on-secondary-fixed: light-dark(#3f3f3f, #07006c);
-  --color-on-secondary-fixed-variant: light-dark(#5b5b5b, #2f2ebe);
-  --color-tertiary-fixed: light-dark(#d8e0ed, #e0e3e5);
-  --color-tertiary-fixed-dim: light-dark(#c9d2de, #c4c7c9);
-  --color-on-tertiary-fixed: light-dark(#363e48, #191c1e);
-  --color-on-tertiary-fixed-variant: light-dark(#525b65, #c4c7c9);
-  --color-primary-dim: light-dark(#2e5a20, #34d399);
-  --color-secondary-dim: light-dark(#4f4f4f, #3131c0);
-  --color-tertiary-dim: light-dark(#48505a, #484b4d);
+  --color-primary-fixed: light-dark(#d4edcf, #68fcbf);
+  --color-primary-fixed-dim: light-dark(#b8d4ae, #45dfa4);
+  --color-on-primary-fixed: light-dark(#2d3b28, #002114);
+  --color-on-primary-fixed-variant: light-dark(#4a6b3e, #005137);
+  --color-secondary-fixed: light-dark(#e8f0e4, #e1e0ff);
+  --color-secondary-fixed-dim: light-dark(#c5d4bc, #c0c1ff);
+  --color-on-secondary-fixed: light-dark(#2d3b28, #07006c);
+  --color-on-secondary-fixed-variant: light-dark(#4a5c44, #2f2ebe);
+  --color-tertiary-fixed: light-dark(#dce8d6, #e0e3e5);
+  --color-tertiary-fixed-dim: light-dark(#c5d4bc, #c4c7c9);
+  --color-on-tertiary-fixed: light-dark(#2d3b28, #191c1e);
+  --color-on-tertiary-fixed-variant: light-dark(#4a5c44, #c4c7c9);
+  --color-primary-dim: light-dark(#4a7a3c, #34d399);
+  --color-secondary-dim: light-dark(#4a5c44, #3131c0);
+  --color-tertiary-dim: light-dark(#4a5c52, #484b4d);
   --color-error-dim: light-dark(#9f0519, #93000a);
-  --color-background: light-dark(#ffffff, #131313);
-  --color-on-background: light-dark(#171717, #e5e2e1);
-  --color-surface-variant: light-dark(#f0f0f0, #353534);
+  --color-background: light-dark(#f7f5f0, #131313);
+  --color-on-background: light-dark(#2d3b28, #e5e2e1);
+  --color-surface-variant: light-dark(#e8f0e4, #353534);
 
   /* Semantic — warning (Amber) for status chips */
   --color-warning: light-dark(#b45309, #fbbf24);
@@ -216,7 +216,7 @@ body {
 }
 
 .glass-panel {
-  background: light-dark(rgba(255, 255, 255, 0.85), rgba(19, 19, 19, 0.85));
+  background: light-dark(rgba(247, 245, 240, 0.88), rgba(19, 19, 19, 0.85));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -240,7 +240,7 @@ body {
 }
 
 .auth-card {
-  background: light-dark(#ffffff, var(--color-surface-container));
+  background: light-dark(#faf8f4, var(--color-surface-container));
   box-shadow: light-dark(
     0 4px 6px -1px rgba(0, 0, 0, 0.05),
     0 2px 4px -1px rgba(0, 0, 0, 0.03)
@@ -256,8 +256,8 @@ body {
 
 .input-focus-ring:focus {
   outline: none;
-  border-color: light-dark(#23691a, var(--color-primary));
-  box-shadow: 0 0 0 3px light-dark(rgba(35, 105, 26, 0.1), rgba(52, 211, 153, 0.1));
+  border-color: light-dark(#5a8f4a, var(--color-primary));
+  box-shadow: 0 0 0 3px light-dark(rgba(90, 143, 74, 0.12), rgba(52, 211, 153, 0.1));
 }
 
 .bento-grid {

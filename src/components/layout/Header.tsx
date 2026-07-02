@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { PROFILE_AVATAR } from '../../data/mock'
 import { useSidebar } from '../../hooks/useSidebar'
 import { Icon } from '../ui/Icon'
+import { Logo } from '../ui/Logo'
 import { ThemeToggle } from '../ui/ThemeToggle'
 
 interface HeaderProps {
@@ -28,9 +29,12 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
         >
           <Icon name="menu" />
         </button>
-        <span className="truncate font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary">
-          El Plonsazo
-        </span>
+        <Logo
+          size="sm"
+          showText
+          className="min-w-0"
+          textClassName="truncate font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+        />
         <div className="relative hidden lg:block">
           <Icon
             name="search"

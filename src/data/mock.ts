@@ -1127,7 +1127,7 @@ export const contactCards: ContactCard[] = [
     id: 'phone',
     title: 'Línea directa',
     description: 'Lunes a viernes, 9:00 – 18:00 (CET).',
-    action: '+34 900 123 456',
+    action: '+57-(324)-902-3251',
     icon: 'call',
   },
   {
