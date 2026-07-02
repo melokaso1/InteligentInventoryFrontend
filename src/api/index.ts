@@ -9,7 +9,18 @@ import type {
   Sale,
   StockMovement,
 } from '../types'
-import { apiFetch, type PagedResponse } from './client'
+import { ApiError, apiFetch, type PagedResponse } from './client'
+import { getToken } from '../hooks/useAuth'
+
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
+function apiRequestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('ngrok-free.dev')) {
+    headers['ngrok-skip-browser-warning'] = 'true'
+  }
+  return headers
+}
 
 interface ApiProduct {
   id: string
@@ -73,6 +84,14 @@ interface ApiInvoice {
   tax: number
   total: number
   invoiceNumber: string
+}
+
+interface CreateInvoicePayload {
+  client: string
+  billingNote: string
+  date: string
+  dueDate: string
+  lineItems: { description: string; quantity: number; unitPrice: number }[]
 }
 
 interface ApiInvoiceStats {
@@ -234,14 +253,14 @@ export async function fetchProducts(params?: {
   category?: string
   page?: number
   pageSize?: number
-}): Promise<PagedResponse<Product>> {
+}, signal?: AbortSignal): Promise<PagedResponse<Product>> {
   const search = new URLSearchParams()
   if (params?.q) search.set('q', params.q)
   if (params?.category) search.set('category', params.category)
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiProduct>>(`/api/products${query ? `?${query}` : ''}`)
+  const data = await apiFetch<PagedResponse<ApiProduct>>(`/api/products${query ? `?${query}` : ''}`, { signal })
   return { ...data, items: data.items.map(mapProduct) }
 }
 
@@ -249,14 +268,63 @@ export async function fetchProductStats(): Promise<ApiProductStats> {
   return apiFetch<ApiProductStats>('/api/products/stats')
 }
 
-export async function fetchInventory(params?: {
-  q?: string
-  category?: string
+export async function fetchProductCategories(signal?: AbortSignal): Promise<string[]> {
+  return apiFetch<string[]>('/api/products/categories', { signal })
+}
+
+export interface CreateProductPayload {
+  code: string
+  name: string
+  category: string
+  price: number
+  stock: number
+  maxStock: number
+  status?: ProductStatus
+  icon?: string
+  description?: string
   warehouse?: string
-  stockLevel?: string
-  page?: number
-  pageSize?: number
-}): Promise<PagedResponse<InventoryItem>> {
+}
+
+export async function createProduct(payload: CreateProductPayload): Promise<Product> {
+  const data = await apiFetch<ApiProduct>('/api/products', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return mapProduct(data)
+}
+
+export type UpdateProductPayload = CreateProductPayload
+
+export async function updateProduct(id: string, payload: UpdateProductPayload): Promise<Product> {
+  const data = await apiFetch<ApiProduct>(`/api/products/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  return mapProduct(data)
+}
+
+export async function deleteProduct(id: string): Promise<void> {
+  await apiFetch<void>(`/api/products/${id}`, { method: 'DELETE' })
+}
+
+export async function duplicateProduct(id: string): Promise<Product> {
+  const data = await apiFetch<ApiProduct>(`/api/products/${id}/duplicate`, {
+    method: 'POST',
+  })
+  return mapProduct(data)
+}
+
+export async function fetchInventory(
+  params?: {
+    q?: string
+    category?: string
+    warehouse?: string
+    stockLevel?: string
+    page?: number
+    pageSize?: number
+  },
+  signal?: AbortSignal,
+): Promise<PagedResponse<InventoryItem>> {
   const search = new URLSearchParams()
   if (params?.q) search.set('q', params.q)
   if (params?.category) search.set('category', params.category)
@@ -265,7 +333,9 @@ export async function fetchInventory(params?: {
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiInventoryItem>>(`/api/inventory${query ? `?${query}` : ''}`)
+  const data = await apiFetch<PagedResponse<ApiInventoryItem>>(`/api/inventory${query ? `?${query}` : ''}`, {
+    signal,
+  })
   return {
     ...data,
     items: data.items.map((item) => ({
@@ -281,6 +351,10 @@ export async function fetchInventory(params?: {
       icon: item.icon,
     })),
   }
+}
+
+export async function fetchInventoryCategories(signal?: AbortSignal): Promise<string[]> {
+  return apiFetch<string[]>('/api/inventory/categories', { signal })
 }
 
 export async function fetchInventoryStats(): Promise<ApiInventoryStats> {
@@ -299,6 +373,31 @@ export async function fetchStockMovements(limit = 20): Promise<StockMovement[]> 
     timestamp: m.timestamp,
     detail: m.detail,
   }))
+}
+
+export interface CreateInventoryAdjustmentPayload {
+  productId?: string
+  productCode?: string
+  quantityChange: number
+  reason: string
+  detail?: string
+}
+
+export async function createInventoryAdjustment(
+  payload: CreateInventoryAdjustmentPayload,
+): Promise<StockMovement> {
+  const data = await apiFetch<ApiStockMovement>('/api/inventory/adjustments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return {
+    id: data.id,
+    type: data.type,
+    sku: data.sku,
+    change: data.change,
+    timestamp: data.timestamp,
+    detail: data.detail,
+  }
 }
 
 export async function fetchSales(params?: {
@@ -325,6 +424,13 @@ export async function fetchSaleMetrics(): Promise<ApiSaleMetrics> {
   return apiFetch<ApiSaleMetrics>('/api/sales/metrics')
 }
 
+export async function createSaleInvoice(saleId: string): Promise<Invoice> {
+  const data = await apiFetch<ApiInvoice>(`/api/sales/${saleId}/invoice`, {
+    method: 'POST',
+  })
+  return mapInvoice(data)
+}
+
 export async function fetchInvoices(params?: {
   page?: number
   pageSize?: number
@@ -341,6 +447,42 @@ export async function fetchInvoices(params?: {
 
 export async function fetchInvoiceStats(): Promise<ApiInvoiceStats> {
   return apiFetch<ApiInvoiceStats>('/api/invoices/stats')
+}
+
+export async function fetchInvoicePdf(invoiceId: string): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = { ...apiRequestHeaders() }
+  const token = getToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${API_BASE}/api/invoices/${invoiceId}/pdf`, {
+    headers,
+  })
+
+  if (!response.ok) {
+    const message = (await response.text()) || response.statusText
+    throw new ApiError(message, response.status)
+  }
+
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = /filename\*?=(?:UTF-8''|")?([^";\n]+)/i.exec(disposition)
+  const filename = match?.[1]?.replace(/"/g, '') ?? 'factura.pdf'
+
+  return { blob, filename }
+}
+
+export async function createInvoice(payload: CreateInvoicePayload): Promise<Invoice> {
+  const data = await apiFetch<ApiInvoice>('/api/invoices', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return mapInvoice(data)
+}
+
+export async function fetchChatHealth(): Promise<{ status: string; chatbot: string }> {
+  return apiFetch<{ status: string; chatbot: string }>('/api/chat/health')
 }
 
 export async function sendChatMessage(sessionId: string, message: string): Promise<ChatApiResponse> {

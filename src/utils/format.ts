@@ -14,6 +14,13 @@ export function formatCOP(amount: number, decimals?: number): string {
 /** Alias de formatCOP — moneda por defecto del sistema. */
 export const formatCurrency = formatCOP
 
+/** Formatea una fecha ISO a estilo medio en español (Colombia). */
+export function formatDate(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium' }).format(date)
+}
+
 /** Formato compacto para montos grandes: $123,2M */
 export function formatCOPCompact(amount: number): string {
   if (amount >= 1_000_000) {

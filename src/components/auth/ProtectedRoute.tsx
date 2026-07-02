@@ -1,9 +1,18 @@
 import { Navigate, Outlet } from 'react-router-dom'
-import { isLoggedIn } from '../../hooks/useAuth'
+import { getRole, isLoggedIn } from '../../hooks/useAuth'
 
-export function ProtectedRoute() {
+interface ProtectedRouteProps {
+  adminOnly?: boolean
+}
+
+export function ProtectedRoute({ adminOnly = false }: ProtectedRouteProps) {
   if (!isLoggedIn()) {
     return <Navigate to="/login" replace />
   }
+
+  if (adminOnly && getRole() !== 'admin') {
+    return <Navigate to="/chatbot" replace />
+  }
+
   return <Outlet />
 }

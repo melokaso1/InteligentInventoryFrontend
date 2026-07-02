@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { PROFILE_AVATAR } from '../../data/mock'
+import { isAdmin } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
 import { Icon } from '../ui/Icon'
 import { Logo } from '../ui/Logo'
@@ -10,13 +10,15 @@ interface HeaderProps {
 }
 
 const HEADER_TABS = [
-  { label: 'Resumen', to: '/', end: true },
-  { label: 'Informes', to: '/reports' },
+  { label: 'Resumen', to: '/', end: true, adminOnly: true },
+  { label: 'Informes', to: '/reports', adminOnly: true },
   { label: 'Soporte', to: '/support' },
 ] as const
 
 export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
   const { toggle: toggleSidebar } = useSidebar()
+  const admin = isAdmin()
+  const visibleTabs = HEADER_TABS.filter((tab) => !('adminOnly' in tab && tab.adminOnly) || admin)
 
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 max-w-full shrink-0 items-center justify-between gap-md overflow-hidden border-b border-outline-variant bg-surface px-md shadow-sm sm:px-lg lg:ml-sidebar-width lg:w-[calc(100%-var(--spacing-sidebar-width))]">
@@ -51,7 +53,7 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
 
       <nav className="flex shrink-0 items-center gap-md sm:gap-lg">
         <div className="hidden items-center gap-md font-label-md text-label-md md:flex">
-          {HEADER_TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <NavLink
               key={tab.to}
               to={tab.to}
@@ -84,11 +86,12 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
             <Icon name="help_outline" />
           </button>
           <ThemeToggle />
-          <img
-            className="h-8 w-8 rounded-full border border-outline-variant object-cover"
-            src={PROFILE_AVATAR}
-            alt="Perfil"
-          />
+          <span
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant bg-surface-container-high text-on-surface-variant"
+            aria-label="Perfil"
+          >
+            <Icon name="account_circle" size={28} />
+          </span>
         </div>
       </nav>
     </header>

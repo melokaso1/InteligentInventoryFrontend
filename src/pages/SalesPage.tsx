@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { Sale } from '../types'
-import { fetchSales, fetchSaleMetrics } from '../api'
+import { ApiError } from '../api/client'
+import { createSaleInvoice, fetchSales, fetchSaleMetrics } from '../api'
 import { formatCOP } from '../utils/format'
 import { DataTable } from '../components/ui/DataTable'
 import { Drawer } from '../components/ui/Drawer'
@@ -30,6 +32,7 @@ function shortOrderId(id: string) {
 }
 
 export function SalesPage() {
+  const navigate = useNavigate()
   const [sales, setSales] = useState<Sale[]>([])
   const [metrics, setMetrics] = useState({
     totalSales: 0,
@@ -41,6 +44,22 @@ export function SalesPage() {
   const [selected, setSelected] = useState<Sale | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [originFilter, setOriginFilter] = useState<'all' | 'manual' | 'chatbot'>('all')
+  const [generatingId, setGeneratingId] = useState<string | null>(null)
+  const [invoiceFeedback, setInvoiceFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null,
+  )
+
+  const loadSales = useCallback(async () => {
+    const [salesResult, metricsResult] = await Promise.all([
+      fetchSales({
+        origin: originFilter === 'all' ? undefined : originFilter,
+        pageSize: 50,
+      }),
+      fetchSaleMetrics(),
+    ])
+    setSales(salesResult.items)
+    setMetrics(metricsResult)
+  }, [originFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -48,17 +67,7 @@ export function SalesPage() {
     async function load() {
       setLoading(true)
       try {
-        const [salesResult, metricsResult] = await Promise.all([
-          fetchSales({
-            origin: originFilter === 'all' ? undefined : originFilter,
-            pageSize: 50,
-          }),
-          fetchSaleMetrics(),
-        ])
-        if (!cancelled) {
-          setSales(salesResult.items)
-          setMetrics(metricsResult)
-        }
+        if (!cancelled) await loadSales()
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -68,16 +77,43 @@ export function SalesPage() {
     return () => {
       cancelled = true
     }
-  }, [originFilter])
+  }, [loadSales])
 
   const openDrawer = (sale: Sale) => {
+    setInvoiceFeedback(null)
     setSelected(sale)
     setDrawerOpen(true)
+  }
+
+  const handleGenerateInvoice = async (sale: Sale) => {
+    if (generatingId || sale.status === 'invoiced') return
+
+    setGeneratingId(sale.id)
+    setInvoiceFeedback(null)
+    try {
+      await createSaleInvoice(sale.id)
+      await loadSales()
+      setInvoiceFeedback({ type: 'success', message: 'Factura generada correctamente.' })
+      setDrawerOpen(false)
+      navigate('/invoices')
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'No se pudo generar la factura.'
+      setInvoiceFeedback({ type: 'error', message })
+    } finally {
+      setGeneratingId(null)
+    }
   }
 
   const orderCount = sales.length
   const periodTotal = metrics.totalRevenue
   const avgTicket = orderCount > 0 ? periodTotal / orderCount : 0
+  const selectedGenerating = selected ? generatingId === selected.id : false
+  const selectedAlreadyInvoiced = selected?.status === 'invoiced'
 
   if (loading && sales.length === 0) {
     return (
@@ -232,9 +268,18 @@ export function SalesPage() {
                 key: 'actions',
                 header: 'Acciones',
                 className: 'text-right',
-                render: () => (
-                  <div className="flex justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button type="button" className="rounded-lg p-2 text-primary hover:bg-primary/10">
+                render: (row) => (
+                  <div
+                    className="flex justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      disabled={row.status === 'invoiced' || generatingId === row.id}
+                      title={row.status === 'invoiced' ? 'Ya facturada' : 'Generar factura'}
+                      onClick={() => void handleGenerateInvoice(row)}
+                      className="rounded-lg p-2 text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
                       <Icon name="receipt_long" />
                     </button>
                     <button type="button" className="rounded-lg p-2 text-primary hover:bg-primary/10">
@@ -255,12 +300,28 @@ export function SalesPage() {
         subtitle={selected ? shortOrderId(selected.id) : undefined}
         width="500px"
         footer={
-          <button
-            type="button"
-            className="w-full rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary"
-          >
-            Generar factura
-          </button>
+          <div className="space-y-sm">
+            {invoiceFeedback ? (
+              <p
+                className={`text-body-sm ${invoiceFeedback.type === 'error' ? 'text-error' : 'text-primary'}`}
+                role="alert"
+              >
+                {invoiceFeedback.message}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              disabled={selectedGenerating || selectedAlreadyInvoiced}
+              onClick={() => selected && void handleGenerateInvoice(selected)}
+              className="w-full rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {selectedGenerating
+                ? 'Generando factura…'
+                : selectedAlreadyInvoiced
+                  ? 'Factura ya generada'
+                  : 'Generar factura'}
+            </button>
+          </div>
         }
       >
         {selected && (

@@ -127,6 +127,7 @@ export interface NavItem {
   to: string
   label: string
   icon: string
+  adminOnly?: boolean
 }
 
 export interface ReportItem {

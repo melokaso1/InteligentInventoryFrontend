@@ -1,10 +1,30 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { contactCards, faqItems } from '../data/mock'
 import { Icon } from '../components/ui/Icon'
 
+const FAQ_ITEMS = [
+  {
+    id: 'password',
+    question: '¿Cómo restablezco mi contraseña?',
+    answer:
+      'Ve a la pantalla de inicio de sesión y haz clic en "¿Olvidaste tu contraseña?". Recibirás un enlace por correo para crear una nueva contraseña.',
+  },
+  {
+    id: 'chatbot',
+    question: '¿Cómo funciona el asistente de chatbot?',
+    answer:
+      'El chatbot consulta el inventario en tiempo real, puede buscar productos por SKU o nombre y ayudarte a registrar compras. Accede desde el menú lateral.',
+  },
+  {
+    id: 'stock',
+    question: '¿Quién recibe las alertas de stock bajo?',
+    answer:
+      'Las alertas aparecen en el panel principal. Los responsables de inventario pueden revisar los productos con stock crítico en la sección de inventario.',
+  },
+] as const
+
 export function SupportPage() {
-  const [openFaq, setOpenFaq] = useState<string | null>(faqItems[0]?.id ?? null)
+  const [openFaq, setOpenFaq] = useState<string | null>(FAQ_ITEMS[0]?.id ?? null)
 
   return (
     <div className="space-y-xl">
@@ -15,27 +35,34 @@ export function SupportPage() {
         </p>
       </div>
 
-      <section className="grid grid-cols-1 gap-lg md:grid-cols-3">
-        {contactCards.map((card) => (
-          <div
-            key={card.id}
-            className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-lowest p-lg shadow-sm transition-shadow hover:shadow-md"
-          >
-            <div className="mb-md rounded-lg bg-primary/10 p-sm text-primary w-fit">
-              <Icon name={card.icon} />
-            </div>
-            <h2 className="font-headline-sm text-headline-sm">{card.title}</h2>
-            <p className="mt-xs flex-1 font-body-sm text-body-sm text-on-surface-variant">
-              {card.description}
-            </p>
-            <button
-              type="button"
-              className="mt-md text-left font-label-md text-label-md text-primary hover:underline"
-            >
-              {card.action}
-            </button>
+      <section className="grid grid-cols-1 gap-lg md:grid-cols-2">
+        <div className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-lowest p-lg shadow-sm">
+          <div className="mb-md w-fit rounded-lg bg-primary/10 p-sm text-primary">
+            <Icon name="mail" />
           </div>
-        ))}
+          <h2 className="font-headline-sm text-headline-sm">Correo de soporte</h2>
+          <p className="mt-xs flex-1 font-body-sm text-body-sm text-on-surface-variant">
+            Escríbenos para consultas técnicas o incidencias con el sistema.
+          </p>
+          <a
+            href="mailto:soporte@smartinventory.ai"
+            className="mt-md font-label-md text-label-md text-primary hover:underline"
+          >
+            soporte@smartinventory.ai
+          </a>
+        </div>
+        <div className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-lowest p-lg shadow-sm">
+          <div className="mb-md w-fit rounded-lg bg-primary/10 p-sm text-primary">
+            <Icon name="menu_book" />
+          </div>
+          <h2 className="font-headline-sm text-headline-sm">Documentación</h2>
+          <p className="mt-xs flex-1 font-body-sm text-body-sm text-on-surface-variant">
+            Guías de usuario y referencia de la API del proyecto SmartInventory AI.
+          </p>
+          <p className="mt-md font-label-md text-label-md text-on-surface-variant">
+            Próximamente disponible
+          </p>
+        </div>
       </section>
 
       <div className="grid grid-cols-1 gap-lg lg:grid-cols-2">
@@ -44,7 +71,7 @@ export function SupportPage() {
             <h2 className="font-headline-sm text-headline-sm">Preguntas frecuentes</h2>
           </div>
           <div className="divide-y divide-outline-variant/30">
-            {faqItems.map((item) => {
+            {FAQ_ITEMS.map((item) => {
               const isOpen = openFaq === item.id
               return (
                 <div key={item.id}>
@@ -73,24 +100,23 @@ export function SupportPage() {
         <section className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-lowest p-lg shadow-sm">
           <h2 className="font-headline-sm text-headline-sm">Enlaces de ayuda</h2>
           <p className="mt-xs font-body-sm text-body-sm text-on-surface-variant">
-            Accesos rápidos a recursos y herramientas del sistema.
+            Accesos rápidos a recursos del sistema.
           </p>
           <ul className="mt-lg space-y-sm">
             {[
-              { label: 'Guía de inicio rápido', icon: 'rocket_launch' },
-              { label: 'Centro de formación', icon: 'school' },
-              { label: 'Estado del sistema', icon: 'monitor_heart' },
-              { label: 'Política de privacidad', icon: 'policy' },
+              { label: 'Panel de control', to: '/', icon: 'dashboard' },
+              { label: 'Inventario', to: '/inventory', icon: 'warehouse' },
+              { label: 'Asistente IA', to: '/chatbot', icon: 'smart_toy' },
             ].map((link) => (
-              <li key={link.label}>
-                <button
-                  type="button"
+              <li key={link.to}>
+                <Link
+                  to={link.to}
                   className="flex w-full items-center gap-md rounded-lg px-md py-sm font-body-md text-body-md text-on-surface transition-colors hover:bg-surface-container-high"
                 >
                   <Icon name={link.icon} className="text-primary" size={20} />
                   {link.label}
                   <Icon name="chevron_right" className="ml-auto text-on-surface-variant" size={18} />
-                </button>
+                </Link>
               </li>
             ))}
           </ul>

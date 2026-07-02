@@ -1,11 +1,13 @@
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { login as apiLogin, register as apiRegister, type AuthUser } from '../api/auth'
 
 const AUTH_KEY = 'erp-auth'
+const TOKEN_KEY = 'erp-token'
 const ROLE_KEY = 'erp-role'
-const USERS_KEY = 'erp-users'
+const USER_KEY = 'erp-user'
 
-export type ErpRole = 'admin' | 'user'
+export type ErpRole = 'admin' | 'cliente'
 
 export interface RegisterData {
   name: string
@@ -13,43 +15,50 @@ export interface RegisterData {
   password: string
 }
 
-export interface StoredUser extends RegisterData {
-  id: string
-  createdAt: string
+function persistAuth(token: string, user: AuthUser) {
+  localStorage.setItem(AUTH_KEY, 'true')
+  localStorage.setItem(TOKEN_KEY, token)
+  localStorage.setItem(ROLE_KEY, user.role)
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
-// role: 'user' is reserved for future /app/* routes when a user portal design exists.
+function clearAuth() {
+  localStorage.removeItem(AUTH_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(ROLE_KEY)
+  localStorage.removeItem(USER_KEY)
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
 export function useAuth() {
   const navigate = useNavigate()
   const [isAuthenticated, setIsAuthenticated] = useState(
-    () => localStorage.getItem(AUTH_KEY) === 'true',
+    () => localStorage.getItem(AUTH_KEY) === 'true' && !!localStorage.getItem(TOKEN_KEY),
   )
 
-  const login = useCallback(() => {
-    localStorage.setItem(AUTH_KEY, 'true')
-    localStorage.setItem(ROLE_KEY, 'admin')
-    setIsAuthenticated(true)
-    navigate('/')
-  }, [navigate])
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const result = await apiLogin(email, password)
+      persistAuth(result.token, result.user)
+      setIsAuthenticated(true)
+      navigate(result.user.role === 'admin' ? '/' : '/chatbot')
+    },
+    [navigate],
+  )
 
   const register = useCallback(
-    (data: RegisterData) => {
-      const users = getStoredUsers()
-      const newUser: StoredUser = {
-        ...data,
-        id: `user-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-      }
-      users.push(newUser)
-      localStorage.setItem(USERS_KEY, JSON.stringify(users))
+    async (data: RegisterData) => {
+      await apiRegister(data)
       navigate('/login', { state: { registered: true, email: data.email } })
     },
     [navigate],
   )
 
   const logout = useCallback(() => {
-    localStorage.removeItem(AUTH_KEY)
-    localStorage.removeItem(ROLE_KEY)
+    clearAuth()
     setIsAuthenticated(false)
     navigate('/login')
   }, [navigate])
@@ -58,18 +67,23 @@ export function useAuth() {
 }
 
 export function isLoggedIn(): boolean {
-  return localStorage.getItem(AUTH_KEY) === 'true'
+  return localStorage.getItem(AUTH_KEY) === 'true' && !!localStorage.getItem(TOKEN_KEY)
 }
 
 export function getRole(): ErpRole {
-  return (localStorage.getItem(ROLE_KEY) as ErpRole) ?? 'admin'
+  const role = localStorage.getItem(ROLE_KEY) as ErpRole | null
+  return role === 'admin' ? 'admin' : 'cliente'
 }
 
-function getStoredUsers(): StoredUser[] {
+export function isAdmin(): boolean {
+  return getRole() === 'admin'
+}
+
+export function getCurrentUser(): AuthUser | null {
   try {
-    const raw = localStorage.getItem(USERS_KEY)
-    return raw ? (JSON.parse(raw) as StoredUser[]) : []
+    const raw = localStorage.getItem(USER_KEY)
+    return raw ? (JSON.parse(raw) as AuthUser) : null
   } catch {
-    return []
+    return null
   }
 }

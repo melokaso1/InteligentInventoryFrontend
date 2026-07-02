@@ -13,16 +13,22 @@ interface ModalProps {
 export function Modal({ open, onClose, title, icon, children, footer }: ModalProps) {
   return (
     <div
-      className={`fixed inset-0 bg-inverse-surface/60 backdrop-blur-sm z-[100] flex items-center justify-center transition-opacity duration-300 ${
+      className={`fixed inset-0 z-[100] flex items-center justify-center transition-opacity duration-300 ${
         open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
       }`}
-      onClick={onClose}
+      aria-hidden={!open}
     >
+      <button
+        type="button"
+        className="absolute inset-0 bg-inverse-surface/60 backdrop-blur-sm"
+        onClick={onClose}
+        aria-label="Cerrar"
+        tabIndex={open ? 0 : -1}
+      />
       <div
-        className={`bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl transform transition-transform duration-300 flex flex-col overflow-hidden border border-outline-variant mx-4 ${
+        className={`relative z-10 bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl transform transition-transform duration-300 flex flex-col overflow-hidden border border-outline-variant mx-4 ${
           open ? 'scale-100' : 'scale-95'
         }`}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="p-lg bg-surface-container border-b border-outline-variant flex justify-between items-center">
           <div className="flex items-center gap-sm text-primary">
@@ -39,7 +45,12 @@ export function Modal({ open, onClose, title, icon, children, footer }: ModalPro
         </div>
         <div className="p-lg space-y-md">{children}</div>
         {footer && (
-          <div className="p-lg bg-surface-container-low border-t border-outline-variant">{footer}</div>
+          <div
+            className="relative z-10 p-lg bg-surface-container-low border-t border-outline-variant"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {footer}
+          </div>
         )}
       </div>
     </div>

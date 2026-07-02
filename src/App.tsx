@@ -11,6 +11,7 @@ import { ProductsPage } from './pages/ProductsPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SalesPage } from './pages/SalesPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { SupportPage } from './pages/SupportPage'
 
 function App() {
@@ -21,14 +22,17 @@ function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="products" element={<ProductsPage />} />
-            <Route path="inventory" element={<InventoryPage />} />
-            <Route path="sales" element={<SalesPage />} />
-            <Route path="invoices" element={<InvoicesPage />} />
             <Route path="chatbot" element={<ChatbotPage />} />
-            <Route path="reports" element={<ReportsPage />} />
             <Route path="support" element={<SupportPage />} />
+            <Route element={<ProtectedRoute adminOnly />}>
+              <Route index element={<DashboardPage />} />
+              <Route path="products" element={<ProductsPage />} />
+              <Route path="inventory" element={<InventoryPage />} />
+              <Route path="sales" element={<SalesPage />} />
+              <Route path="invoices" element={<InvoicesPage />} />
+              <Route path="reports" element={<ReportsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

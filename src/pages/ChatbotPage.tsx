@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import type { ChatMessage } from '../types'
 import {
+  fetchChatHealth,
   getChatSessionId,
   sendChatMessage,
   type ChatOperationSummary,
 } from '../api'
+import { ApiError } from '../api/client'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
+import { Icon } from '../components/ui/Icon'
 
 type MobileView = 'chat' | 'summary'
+type HealthStatus = 'checking' | 'healthy' | 'unhealthy'
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -20,7 +25,44 @@ const WELCOME_MESSAGE: ChatMessage = {
   chips: ['Consultar stock', 'Buscar producto', 'Ver ofertas'],
 }
 
+const CHIP_INTENT_MESSAGES: Record<string, string> = {
+  'Consultar stock': 'consultar stock',
+  'Buscar producto': 'buscar producto',
+  'Ver ofertas': 'ver ofertas',
+  'Nueva consulta': 'nueva consulta',
+  'Cancelar': 'cancelar',
+}
+
+function getChatErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 502) {
+      return 'No se pudo conectar con la API (.NET). Inicia el backend en el puerto 5151.'
+    }
+    if (err.status === 503) {
+      return 'El chatbot FastAPI no está disponible. Ejecuta: cd LLMChatBot && python run.py'
+    }
+    if (err.status === 401) {
+      return 'Sesión expirada. Vuelve a iniciar sesión.'
+    }
+    return err.message || 'No pude procesar tu mensaje. Inténtalo de nuevo.'
+  }
+  return 'No pude conectar con el servicio de chat. Verifica que la API .NET y el chatbot FastAPI estén en ejecución.'
+}
+
+function getHealthBannerMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 502) {
+      return 'API no disponible — inicia el backend .NET en el puerto 5151 (cd Backend/Api && dotnet run).'
+    }
+    if (err.status === 503) {
+      return 'Chatbot no disponible — levanta FastAPI en :8000 (cd LLMChatBot && python run.py).'
+    }
+  }
+  return 'Chatbot no disponible — verifica que la API .NET y FastAPI estén en ejecución.'
+}
+
 export function ChatbotPage() {
+  const location = useLocation()
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE])
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
@@ -29,8 +71,41 @@ export function ChatbotPage() {
   const [chatState, setChatState] = useState('idle')
   const [invoiceNumber, setInvoiceNumber] = useState<string | undefined>()
   const [sessionId] = useState(() => getChatSessionId())
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>('checking')
+  const [healthBanner, setHealthBanner] = useState('')
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const scrollBehaviorRef = useRef<ScrollBehavior>('smooth')
+  const sentInitialForKey = useRef<string | null>(null)
+  const requestSeq = useRef(0)
+  const latestRequestIdRef = useRef(0)
+  const lastCancelSentAtRef = useRef(0)
+
+  const chatAvailable = healthStatus === 'healthy'
+
+  const checkHealth = useCallback(async () => {
+    try {
+      await fetchChatHealth()
+      setHealthStatus('healthy')
+      setHealthBanner('')
+    } catch (err) {
+      setHealthStatus('unhealthy')
+      setHealthBanner(getHealthBannerMessage(err))
+    }
+  }, [])
+
+  useEffect(() => {
+    void checkHealth()
+  }, [checkHealth])
+
+  useEffect(() => {
+    if (healthStatus !== 'unhealthy') return
+
+    const interval = setInterval(() => {
+      void checkHealth()
+    }, 10_000)
+
+    return () => clearInterval(interval)
+  }, [healthStatus, checkHealth])
 
   useEffect(() => {
     const container = messagesContainerRef.current
@@ -49,12 +124,28 @@ export function ChatbotPage() {
   }, [messages, isTyping])
 
   const sendMessage = async (text: string) => {
-    if (!text.trim() || isTyping) return
+    const normalizedText = text.trim()
+    if (!normalizedText || !chatAvailable) return
+
+    const isCancel = /cancelar|cancel/i.test(normalizedText)
+
+    // Avoid dropping cancel actions even if a request is currently in-flight.
+    if (isTyping && !isCancel) return
+
+    // Prevent rapid double-clicks from queueing multiple cancels.
+    if (isCancel) {
+      const now = Date.now()
+      if (now - lastCancelSentAtRef.current < 800) return
+      lastCancelSentAtRef.current = now
+    }
+
+    const requestId = ++requestSeq.current
+    latestRequestIdRef.current = requestId
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: text.trim(),
+      content: normalizedText,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
 
@@ -64,7 +155,11 @@ export function ChatbotPage() {
     setIsTyping(true)
 
     try {
-      const result = await sendChatMessage(sessionId, text.trim())
+      const result = await sendChatMessage(sessionId, normalizedText)
+
+      // Ignore out-of-order responses from older requests.
+      if (requestId !== latestRequestIdRef.current) return
+
       const botMsg: ChatMessage = {
         id: `bot-${Date.now()}`,
         role: 'assistant',
@@ -76,29 +171,40 @@ export function ChatbotPage() {
       setChatState(result.state)
       setOperationSummary(result.operationSummary ?? null)
       setInvoiceNumber(result.invoiceNumber)
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content:
-            'No pude conectar con el servicio de chat. Verifica que la API .NET y el chatbot FastAPI estén en ejecución.',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-      ])
+    } catch (err) {
+      if (requestId === latestRequestIdRef.current) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: getChatErrorMessage(err),
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ])
+      }
     } finally {
-      setIsTyping(false)
+      if (requestId === latestRequestIdRef.current) {
+        setIsTyping(false)
+      }
     }
   }
 
+  useEffect(() => {
+    const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage
+    if (!initialMessage || sentInitialForKey.current === location.key || !chatAvailable) return
+    sentInitialForKey.current = location.key
+    void sendMessage(initialMessage)
+  }, [location.key, location.state, chatAvailable])
+
   const handleChipClick = (chip: string) => {
+    if (!chatAvailable) return
     if (chip.toLowerCase().includes('confirmar') || chip.toLowerCase().includes('confirm')) {
       void sendMessage('Sí, confirmo la compra.')
     } else if (chip.toLowerCase().includes('cancelar') || chip.toLowerCase().includes('cancel')) {
-      void sendMessage('Cancelar la solicitud.')
+      void sendMessage('cancelar')
     } else {
-      void sendMessage(chip)
+      void sendMessage(CHIP_INTENT_MESSAGES[chip] ?? chip)
     }
   }
 
@@ -142,17 +248,61 @@ export function ChatbotPage() {
           mobileView !== 'chat' ? 'hidden lg:flex' : ''
         }`}
       >
+        {healthStatus !== 'healthy' && (
+          <div
+            role="alert"
+            className={`z-20 flex shrink-0 items-center gap-sm border-b px-lg py-sm font-body-sm text-body-sm ${
+              healthStatus === 'checking'
+                ? 'border-outline-variant bg-surface-container text-on-surface-variant'
+                : 'border-error/30 bg-error/10 text-error'
+            }`}
+          >
+            <Icon
+              name={healthStatus === 'checking' ? 'hourglass_empty' : 'warning'}
+              size={18}
+              className="shrink-0"
+            />
+            <span className="flex-1">
+              {healthStatus === 'checking'
+                ? 'Comprobando disponibilidad del chatbot…'
+                : healthBanner}
+            </span>
+            {healthStatus === 'unhealthy' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHealthStatus('checking')
+                  void checkHealth()
+                }}
+                className="shrink-0 rounded border border-current px-sm py-xs font-label-md text-label-md transition-colors hover:bg-error/10"
+              >
+                Reintentar
+              </button>
+            )}
+          </div>
+        )}
+
         <div
           ref={messagesContainerRef}
           className="custom-scrollbar z-10 flex flex-1 flex-col gap-lg overflow-y-auto p-lg"
         >
           {messages.map((msg) => (
-            <ChatMessageComponent key={msg.id} message={msg} onChipClick={handleChipClick} />
+            <ChatMessageComponent
+              key={msg.id}
+              message={msg}
+              onChipClick={handleChipClick}
+              chipsDisabled={!chatAvailable}
+            />
           ))}
           {isTyping && <TypingIndicator />}
         </div>
 
-        <ChatInput value={input} onChange={setInput} onSend={() => void sendMessage(input)} />
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={() => void sendMessage(input)}
+          disabled={!chatAvailable}
+        />
       </section>
 
       <OperationSummary
@@ -164,7 +314,7 @@ export function ChatbotPage() {
         invoiceNumber={invoiceNumber}
         onConfirm={() => void sendMessage('Sí, confirmo la compra.')}
         onModify={() => void sendMessage('Quiero modificar el pedido.')}
-        onCancel={() => void sendMessage('Cancelar la solicitud.')}
+        onCancel={() => void sendMessage('cancelar')}
       />
     </div>
   )

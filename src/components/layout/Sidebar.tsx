@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
-import { navItems } from '../../data/mock'
-import { useAuth } from '../../hooks/useAuth'
+import { navItems } from '../../data/navigation'
+import { isAdmin, useAuth } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
 import { Icon } from '../ui/Icon'
 import { Logo } from '../ui/Logo'
@@ -9,6 +9,8 @@ import { PrimaryActionButton } from '../ui/PrimaryActionButton'
 export function Sidebar() {
   const { logout } = useAuth()
   const { open, setOpen } = useSidebar()
+  const admin = isAdmin()
+  const visibleNavItems = navItems.filter((item) => !item.adminOnly || admin)
 
   return (
     <>
@@ -50,7 +52,7 @@ export function Sidebar() {
         </div>
 
         <nav className="custom-scrollbar flex-1 space-y-xs overflow-y-auto px-md">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -71,17 +73,28 @@ export function Sidebar() {
         </nav>
 
         <div className="border-t border-outline-variant/20 p-md">
-          <PrimaryActionButton fullWidth size="compact" className="mb-md">
-            Nueva entrada
-          </PrimaryActionButton>
+          {admin && (
+            <PrimaryActionButton fullWidth size="compact" className="mb-md">
+              Nueva entrada
+            </PrimaryActionButton>
+          )}
           <div className="space-y-xs">
-            <button
-              type="button"
-              className="flex w-full items-center gap-md px-md py-sm font-body-md text-body-md text-secondary-fixed-dim transition-colors hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface"
-            >
-              <Icon name="settings" />
-              <span>Configuración</span>
-            </button>
+            {admin && (
+              <NavLink
+                to="/settings"
+                onClick={() => setOpen(false)}
+                className={({ isActive }) =>
+                  `flex w-full items-center gap-md px-md py-sm font-body-md text-body-md transition-colors ${
+                    isActive
+                      ? 'bg-primary/10 font-bold text-primary'
+                      : 'text-secondary-fixed-dim hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface'
+                  }`
+                }
+              >
+                <Icon name="settings" />
+                <span>Configuración</span>
+              </NavLink>
+            )}
             <button
               type="button"
               onClick={logout}

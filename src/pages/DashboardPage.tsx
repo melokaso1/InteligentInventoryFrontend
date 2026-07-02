@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { fetchActivity, fetchDashboardKpis, fetchLowStock } from '../api'
+import { ApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import type { ActivityItem, DashboardKpi, LowStockItem } from '../types'
 
@@ -24,10 +25,12 @@ function statusLabel(status: string) {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate()
   const [kpis, setKpis] = useState<DashboardKpi[]>([])
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [apiDown, setApiDown] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -43,6 +46,11 @@ export function DashboardPage() {
           setKpis(kpiData)
           setLowStockItems(lowStockData)
           setRecentActivity(activityData)
+          setApiDown(false)
+        }
+      } catch (err) {
+        if (!cancelled && err instanceof ApiError && err.status === 502) {
+          setApiDown(true)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -65,6 +73,18 @@ export function DashboardPage() {
 
   return (
     <div className="min-w-0 space-y-xl">
+      {apiDown && (
+        <div
+          role="alert"
+          className="flex items-center gap-sm rounded-xl border border-error/30 bg-error/10 px-lg py-md font-body-sm text-body-sm text-error"
+        >
+          <Icon name="warning" size={20} className="shrink-0" />
+          <span>
+            API no disponible (puerto 5151). Ejecuta <code className="font-mono text-xs">dotnet run</code> en{' '}
+            <code className="font-mono text-xs">Backend/Api</code>.
+          </span>
+        </div>
+      )}
       <section className="grid grid-cols-1 gap-lg md:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <div
@@ -182,7 +202,14 @@ export function DashboardPage() {
                         <td className="px-lg py-md">
                           <button
                             type="button"
+                            aria-label={`Consultar stock de ${item.sku}`}
                             className="rounded p-xs text-primary transition-colors hover:bg-primary/10"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigate('/chatbot', {
+                                state: { initialMessage: `Consultar stock de ${item.sku}` },
+                              })
+                            }}
                           >
                             <Icon name="shopping_cart_checkout" />
                           </button>

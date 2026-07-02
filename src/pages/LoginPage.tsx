@@ -1,7 +1,9 @@
 import { type FormEvent, type ReactNode, useState } from 'react'
-import { Link, Navigate, useLocation } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { ApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
+import { Modal } from '../components/ui/Modal'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
 import { isLoggedIn, useAuth } from '../hooks/useAuth'
 
@@ -62,19 +64,43 @@ function InputField({
 export function LoginPage() {
   const { login } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   const registered = (location.state as { registered?: boolean; email?: string } | null)?.registered
   const [email, setEmail] = useState(
     () => (location.state as { email?: string } | null)?.email ?? '',
   )
   const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [forgotOpen, setForgotOpen] = useState(false)
 
   if (isLoggedIn()) {
     return <Navigate to="/" replace />
   }
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    login()
+    setError('')
+    setLoading(true)
+    try {
+      await login(email, password)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          setError('Correo o contraseña incorrectos.')
+        } else if (err.status === 502) {
+          setError('API no disponible (puerto 5151). Ejecuta dotnet run en Backend/Api.')
+        } else {
+          setError(err.message || 'No se pudo iniciar sesión. Inténtalo de nuevo.')
+        }
+      } else if (err instanceof TypeError) {
+        setError('No se pudo conectar con el servidor.')
+      } else {
+        setError('No se pudo iniciar sesión. Inténtalo de nuevo.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -90,7 +116,7 @@ export function LoginPage() {
             <div className="text-center">
               <h1 className="font-headline-md text-headline-md text-on-surface">El Plonsazo</h1>
               <p className="font-body-sm text-body-sm text-on-surface-variant">
-                Acceso Administrador de Suite Empresarial
+                Acceso a la Suite Empresarial
               </p>
             </div>
           </header>
@@ -123,6 +149,7 @@ export function LoginPage() {
               trailing={
                 <button
                   type="button"
+                  onClick={() => setForgotOpen(true)}
                   className="font-label-md text-label-md text-primary transition-all hover:underline"
                 >
                   ¿Olvidaste tu contraseña?
@@ -130,12 +157,19 @@ export function LoginPage() {
               }
             />
 
+            {error && (
+              <p className="font-body-sm text-body-sm text-error" role="alert">
+                {error}
+              </p>
+            )}
+
             <div className="pt-md">
               <button
                 type="submit"
-                className="flex h-12 w-full items-center justify-center gap-sm rounded bg-primary font-headline-sm text-headline-sm text-on-primary transition-all duration-200 hover:bg-primary-dim active:scale-[0.98]"
+                disabled={loading}
+                className="flex h-12 w-full items-center justify-center gap-sm rounded bg-primary font-headline-sm text-headline-sm text-on-primary transition-all duration-200 hover:bg-primary-dim active:scale-[0.98] disabled:opacity-60"
               >
-                <span>Iniciar Sesión</span>
+                <span>{loading ? 'Iniciando sesión…' : 'Iniciar Sesión'}</span>
                 <Icon name="login" />
               </button>
             </div>
@@ -179,6 +213,39 @@ export function LoginPage() {
           ))}
         </nav>
       </main>
+
+      <Modal
+        open={forgotOpen}
+        onClose={() => setForgotOpen(false)}
+        title="Recuperación de contraseña"
+        icon="lock_reset"
+        footer={
+          <div className="flex gap-md">
+            <button
+              type="button"
+              onClick={() => setForgotOpen(false)}
+              className="flex-1 rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high"
+            >
+              Cerrar
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setForgotOpen(false)
+                navigate('/support')
+              }}
+              className="flex-1 rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90"
+            >
+              Ir a Soporte
+            </button>
+          </div>
+        }
+      >
+        <p className="text-body-sm text-on-surface-variant">
+          La recuperación de contraseña está gestionada por el administrador del sistema. Contacta con soporte para
+          solicitar un restablecimiento de acceso.
+        </p>
+      </Modal>
     </div>
   )
 }

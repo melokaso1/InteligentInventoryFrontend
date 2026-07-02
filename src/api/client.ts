@@ -1,5 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
+import { getToken } from '../hooks/useAuth'
 import { normalizeJson } from './normalize'
 
 export class ApiError extends Error {
@@ -19,6 +20,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   if (typeof window !== 'undefined' && window.location.hostname.endsWith('ngrok-free.dev')) {
     headers['ngrok-skip-browser-warning'] = 'true'
+  }
+
+  const token = getToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
   }
 
   const response = await fetch(`${API_BASE}${path}`, {

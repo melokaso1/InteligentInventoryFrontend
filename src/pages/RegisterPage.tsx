@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
+import { ApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
@@ -59,12 +60,13 @@ export function RegisterPage() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   if (isLoggedIn()) {
     return <Navigate to="/" replace />
   }
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
 
@@ -73,7 +75,24 @@ export function RegisterPage() {
       return
     }
 
-    register({ name, email, password })
+    setLoading(true)
+    try {
+      await register({ name, email, password })
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 409) {
+          setError(err.message || 'Ya existe una cuenta con ese correo electrónico.')
+        } else {
+          setError(err.message || 'No se pudo crear la cuenta.')
+        }
+      } else if (err instanceof TypeError) {
+        setError('No se pudo conectar con el servidor.')
+      } else {
+        setError('No se pudo crear la cuenta. Inténtalo de nuevo.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -144,9 +163,10 @@ export function RegisterPage() {
             <div className="pt-md">
               <button
                 type="submit"
-                className="flex h-12 w-full items-center justify-center gap-sm rounded bg-primary font-headline-sm text-headline-sm text-on-primary transition-all duration-200 hover:bg-primary-dim active:scale-[0.98]"
+                disabled={loading}
+                className="flex h-12 w-full items-center justify-center gap-sm rounded bg-primary font-headline-sm text-headline-sm text-on-primary transition-all duration-200 hover:bg-primary-dim active:scale-[0.98] disabled:opacity-60"
               >
-                <span>Crear cuenta</span>
+                <span>{loading ? 'Creando cuenta…' : 'Crear cuenta'}</span>
                 <Icon name="how_to_reg" />
               </button>
             </div>

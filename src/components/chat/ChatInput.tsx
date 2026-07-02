@@ -4,10 +4,12 @@ interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onSend: () => void
+  disabled?: boolean
 }
 
-export function ChatInput({ value, onChange, onSend }: ChatInputProps) {
+export function ChatInput({ value, onChange, onSend, disabled = false }: ChatInputProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (disabled) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       onSend()
@@ -24,17 +26,19 @@ export function ChatInput({ value, onChange, onSend }: ChatInputProps) {
           <Icon name="attach_file" />
         </button>
         <input
-          className="h-11 min-w-0 flex-1 border-none bg-transparent px-0 text-base leading-normal text-on-surface placeholder:text-outline outline-none focus:ring-0"
+          className="h-11 min-w-0 flex-1 border-none bg-transparent px-0 text-base leading-normal text-on-surface placeholder:text-outline outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
           placeholder="Escribe tu respuesta o solicita cambios..."
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={disabled}
         />
         <button
           type="button"
           onClick={onSend}
-          className="flex shrink-0 items-center gap-xs rounded bg-primary px-md py-sm font-label-md text-label-md text-on-primary transition-all hover:opacity-90 active:scale-95"
+          disabled={disabled}
+          className="flex shrink-0 items-center gap-xs rounded bg-primary px-md py-sm font-label-md text-label-md text-on-primary transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="hidden sm:inline">Enviar</span>
           <Icon name="send" filled size={16} />
