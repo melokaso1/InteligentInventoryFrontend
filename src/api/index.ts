@@ -288,8 +288,10 @@ export async function fetchInventoryStats(): Promise<ApiInventoryStats> {
 }
 
 export async function fetchStockMovements(limit = 20): Promise<StockMovement[]> {
-  const items = await apiFetch<ApiStockMovement[]>(`/api/inventory/movements?limit=${limit}`)
-  return items.map((m) => ({
+  const data = await apiFetch<PagedResponse<ApiStockMovement>>(
+    `/api/inventory/movements?page=1&pageSize=${limit}`,
+  )
+  return data.items.map((m) => ({
     id: m.id,
     type: m.type,
     sku: m.sku,

@@ -1,5 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
+import { normalizeJson } from './normalize'
+
 export class ApiError extends Error {
   status: number
 
@@ -11,11 +13,19 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('ngrok-free.dev')) {
+    headers['ngrok-skip-browser-warning'] = 'true'
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
+      ...headers,
+      ...(init?.headers as Record<string, string> | undefined),
     },
   })
 
@@ -28,7 +38,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     return undefined as T
   }
 
-  return response.json() as Promise<T>
+  const payload: unknown = await response.json()
+  return normalizeJson<T>(payload)
 }
 
 export interface PagedResponse<T> {

@@ -1,11 +1,19 @@
-# El Plonsazo
+# El Plonsazo — Frontend
 
-Panel de administración ERP mock para **El Plonsazo Store**: un dashboard de gestión empresarial con catálogo, inventario, ventas, facturas, chatbot y reportes. Construido con **React 19**, **Vite 8**, **TypeScript** y **Tailwind CSS v4**. Toda la interfaz y los datos son de demostración; no hay backend conectado.
+Panel de administración ERP para **El Plonsazo Store**: dashboard, catálogo, inventario, ventas, facturas y chatbot conectado a la API .NET.
+
+## Stack
+
+- **React 19** + **TypeScript**
+- **Vite 8**
+- **Tailwind CSS v4**
+- **React Router 7**
 
 ## Requisitos
 
-- [Node.js](https://nodejs.org/) 18 o superior (recomendado: LTS)
-- [pnpm](https://pnpm.io/) como gestor de paquetes
+- [Node.js](https://nodejs.org/) 18 o superior (LTS recomendado)
+- [pnpm](https://pnpm.io/)
+- API .NET en **http://localhost:5151** (y chatbot FastAPI para el asistente)
 
 ## Instalación
 
@@ -19,90 +27,94 @@ pnpm install
 pnpm dev
 ```
 
-Vite arranca por defecto en **http://localhost:5173**. Si ese puerto está ocupado, usará **5174** automáticamente.
-
-Para exponer el servidor con ngrok, el host `unhumanistic-maryann-stonefly.ngrok-free.dev` ya está permitido en `vite.config.ts` (`server.allowedHosts`).
-
-## Build
+Vite arranca en **http://localhost:5173**. Las peticiones a `/api/*` se reenvían al backend .NET vía proxy (`vite.config.ts`).
 
 ```bash
-pnpm build
-pnpm preview
+pnpm build    # TypeScript + bundle en dist/
+pnpm preview  # Sirve la build de producción
+pnpm lint     # oxlint
 ```
 
-`build` compila TypeScript y genera los estáticos en `dist/`. `preview` sirve esa carpeta localmente para probar la build de producción.
+## Conexión con la API
 
-Otros scripts disponibles:
+La capa `src/api/` centraliza las llamadas HTTP:
+
+| Módulo | Uso |
+|--------|-----|
+| `client.ts` | `apiFetch`, errores, tipos paginados |
+| `index.ts` | `fetchProducts`, `fetchSales`, `sendChatMessage`, etc. |
+| `normalize.ts` | Convierte respuestas JSON a camelCase antes de mapear a tipos UI |
+
+Variable opcional para producción:
 
 ```bash
-pnpm lint   # oxlint
+VITE_API_URL=https://tu-api.ejemplo.com
 ```
+
+Si no se define, las rutas usan rutas relativas `/api/...` (proxy en dev o mismo origen en prod).
+
+## Chatbot
+
+- `sessionId` persistido en `sessionStorage` (`elplonsazo-chat-session`).
+- `POST /api/chat/message` → proxy .NET → FastAPI.
+- `OperationSummary` se actualiza con `operationSummary` de la respuesta.
 
 ## Autenticación mock
 
-La autenticación es simulada con `localStorage`:
+La autenticación del panel sigue siendo simulada con `localStorage`:
 
-| Clave        | Descripción                                      |
-| ------------ | ------------------------------------------------ |
-| `erp-auth`   | `'true'` cuando la sesión está activa            |
-| `erp-role`   | Rol asignado al iniciar sesión (`admin`)         |
-| `erp-users`  | Usuarios registrados vía `/register` (JSON)      |
+| Clave | Descripción |
+|-------|-------------|
+| `erp-auth` | `'true'` cuando hay sesión |
+| `erp-role` | Rol (`admin`) |
+| `erp-users` | Usuarios de registro (JSON) |
 
-- **Login** (`/login`): acepta cualquier credencial; al enviar el formulario se marca la sesión y redirige al panel.
-- **Registro** (`/register`): guarda el usuario en `erp-users` y redirige al login.
-- Las rutas protegidas exigen `erp-auth === 'true'`; si no hay sesión, redirigen a `/login`.
+- **Login** (`/login`): acepta cualquier credencial.
+- Rutas protegidas exigen `erp-auth === 'true'`.
 
 ## Tema claro / oscuro
 
-El tema se persiste en `localStorage` bajo la clave **`erp-theme`** (`light` | `dark`). El toggle del header aplica la clase `dark` en `<html>` y los tokens de color definidos en `App.css`.
+Persistido en `localStorage` (`erp-theme`: `light` | `dark`). El toggle aplica la clase `dark` en `<html>`.
 
-## Rutas principales
+## Rutas
 
-| Ruta         | Página        | Descripción breve              |
-| ------------ | ------------- | ------------------------------ |
-| `/`          | Panel         | Dashboard con KPIs y actividad |
-| `/products`  | Productos     | Catálogo y gestión de ítems    |
-| `/inventory` | Inventario    | Stock y movimientos            |
-| `/sales`     | Ventas        | Registro de ventas             |
-| `/invoices`  | Facturas      | Facturación y cobros           |
-| `/chatbot`   | Chatbot       | Asistente operativo mock       |
-| `/reports`   | Reportes      | Informes y métricas            |
-| `/support`   | Soporte       | FAQ y contacto                 |
+| Ruta | Página | Datos |
+|------|--------|-------|
+| `/` | Dashboard | API |
+| `/products` | Productos | API |
+| `/inventory` | Inventario | API |
+| `/sales` | Ventas | API |
+| `/invoices` | Facturas | API |
+| `/chatbot` | Chatbot | API + proxy chat |
+| `/reports` | Reportes | Mock |
+| `/support` | Soporte | Mock |
 
-Rutas públicas: `/login`, `/register`. Cualquier otra ruta desconocida redirige a `/`.
+Rutas públicas: `/login`, `/register`.
 
-## Estructura del proyecto
+## Estructura
 
 ```
 src/
-├── pages/           # Vistas por ruta (Dashboard, Products, Login, etc.)
+├── api/             # Cliente HTTP y funciones por recurso
+├── pages/           # Vistas por ruta
 ├── components/
 │   ├── auth/        # ProtectedRoute
-│   ├── chat/        # Chatbot (mensajes, input, resumen)
+│   ├── chat/        # Mensajes, input, resumen de operación
 │   ├── layout/      # AppLayout, Sidebar, Header
-│   └── ui/          # DataTable, Modal, KpiCard, ThemeToggle, etc.
+│   └── ui/          # DataTable, Modal, KpiCard, etc.
 ├── data/
-│   └── mock.ts      # Datos estáticos del ERP
+│   └── mock.ts      # Solo Reports/Support (referencia)
 ├── hooks/           # useAuth, useTheme, useSidebar
-├── types/           # Tipos TypeScript compartidos
-├── utils/           # format.ts (formato COP)
-├── App.tsx          # Router y rutas
-├── App.css          # Tokens de diseño (@theme Tailwind v4)
-└── main.tsx         # Punto de entrada
+├── types/           # Tipos compartidos
+├── utils/           # format.ts (COP)
+├── App.tsx
+└── main.tsx
 ```
 
-Los diseños de referencia en `design/` se ignoran en el watch de Vite para no recargar en caliente al editar mockups.
-
-## Datos mock
-
-No hay API ni base de datos. Todos los listados, KPIs, facturas y conversaciones del chatbot provienen de `src/data/mock.ts`.
-
-- Montos en **pesos colombianos (COP)**; el formateo está en `src/utils/format.ts`.
-- Catálogo temático de **El Plonsazo** (productos ficticios y humorísticos para contexto académico).
-- Almacenes, clientes, movimientos de stock y mensajes del chatbot son datos de ejemplo coherentes entre pantallas.
+Montos en **pesos colombianos (COP)** — ver `src/utils/format.ts`.
 
 ## Notas
 
-- El diseño visual se basa en mockups generados con **Google Stitch** (tema *Executive Precision*).
-- Por ahora solo existe el **panel de administración**; el rol `user` y rutas `/app/*` están reservados para un futuro portal de cliente.
-- Proyecto de curso / universidad: interfaz funcional para demostrar flujos ERP sin integración real.
+- Diseño basado en mockups **Google Stitch** (*Executive Precision*).
+- `design/` se ignora en el watch de Vite.
+- Proyecto académico: panel admin funcional con backend real para el taller SmartInventory AI.
