@@ -1,12 +1,8 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { fetchActivity, fetchDashboardKpis, fetchLowStock } from '../api'
 import { Icon } from '../components/ui/Icon'
-import { dashboardKpis, lowStockItems, recentActivity } from '../data/mock'
-import { formatCOP } from '../utils/format'
-
-function formatKpiValue(kpi: (typeof dashboardKpis)[number]) {
-  if (kpi.id === 'sales') return formatCOP(Number(kpi.value))
-  return kpi.value
-}
+import type { ActivityItem, DashboardKpi, LowStockItem } from '../types'
 
 const salesBars = [4, 6, 8, 5, 7]
 
@@ -28,10 +24,49 @@ function statusLabel(status: string) {
 }
 
 export function DashboardPage() {
+  const [kpis, setKpis] = useState<DashboardKpi[]>([])
+  const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
+  const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const [kpiData, lowStockData, activityData] = await Promise.all([
+          fetchDashboardKpis(),
+          fetchLowStock(),
+          fetchActivity(20),
+        ])
+        if (!cancelled) {
+          setKpis(kpiData)
+          setLowStockItems(lowStockData)
+          setRecentActivity(activityData)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center text-on-surface-variant">
+        Cargando panel…
+      </div>
+    )
+  }
+
   return (
     <div className="min-w-0 space-y-xl">
       <section className="grid grid-cols-1 gap-lg md:grid-cols-2 lg:grid-cols-4">
-        {dashboardKpis.map((kpi) => (
+        {kpis.map((kpi) => (
           <div
             key={kpi.id}
             className="flex flex-col justify-between rounded-xl border border-outline-variant bg-surface-container-lowest p-lg shadow-sm transition-shadow hover:shadow-md"
@@ -40,30 +75,26 @@ export function DashboardPage() {
               <div className={`rounded-lg p-sm ${kpi.iconBg} ${kpi.iconColor}`}>
                 <Icon name={kpi.icon} />
               </div>
-              {kpi.id === 'alerts' ? (
-                <span className="rounded bg-error px-xs py-[2px] text-[10px] font-bold text-on-error">
-                  {kpi.change}
-                </span>
-              ) : (
-                <span
-                  className={`font-label-md text-xs ${
-                    kpi.changeType === 'negative' ? 'text-error' : 'text-primary-dim'
-                  }`}
-                >
-                  {kpi.change}
-                </span>
-              )}
+              <span
+                className={`font-label-md text-xs ${
+                  kpi.changeType === 'negative' || kpi.changeType === 'warning'
+                    ? 'text-error'
+                    : 'text-primary-dim'
+                }`}
+              >
+                {kpi.change}
+              </span>
             </div>
             <div className="mt-md">
               <p className="font-label-md text-label-md uppercase text-on-surface-variant">{kpi.label}</p>
-              <h2 className="mt-xs font-display-lg text-display-lg">{formatKpiValue(kpi)}</h2>
+              <h2 className="mt-xs font-display-lg text-display-lg">{kpi.value}</h2>
             </div>
             {kpi.id === 'products' && (
               <div className="mt-sm h-1 w-full overflow-hidden rounded-full bg-surface-container">
                 <div className="h-full w-3/4 bg-primary" />
               </div>
             )}
-            {kpi.id === 'sales' && (
+            {kpi.id === 'sales_today' && (
               <div className="mt-sm flex h-8 items-end gap-xs">
                 {salesBars.map((h, i) => (
                   <div
@@ -74,12 +105,12 @@ export function DashboardPage() {
                 ))}
               </div>
             )}
-            {kpi.id === 'alerts' && (
+            {kpi.id === 'low_stock' && (
               <p className="mt-sm font-body-sm text-body-sm text-on-surface-variant">
                 Requiere reposición inmediata
               </p>
             )}
-            {kpi.id === 'chatbot' && (
+            {kpi.id === 'chatbot_sales' && (
               <div className="mt-sm flex items-center gap-xs">
                 <Icon name="trending_up" size={14} className="text-primary" />
                 <span className="text-body-sm text-on-surface-variant">Crecimiento por automatización IA</span>
@@ -114,44 +145,52 @@ export function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/30">
-                {lowStockItems.map((item) => {
-                  const status = statusLabel(item.status)
-                  const barPct = stockBarWidth(item.currentStock, item.reorderLevel)
-                  return (
-                    <tr key={item.id} className="transition-colors hover:bg-surface-container-low/50">
-                      <td className="px-lg py-md font-body-md font-bold">{item.name}</td>
-                      <td className="hidden whitespace-nowrap px-lg py-md font-mono text-xs text-on-surface-variant md:table-cell">
-                        {item.sku}
-                      </td>
-                      <td className="px-lg py-md">
-                        <div className="flex items-center gap-sm">
-                          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-container">
-                            <div
-                              className={`h-full ${stockBarColor(item.currentStock, item.reorderLevel)}`}
-                              style={{ width: `${barPct}%` }}
-                            />
+                {lowStockItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-lg py-md text-center text-on-surface-variant">
+                      Sin alertas de stock bajo
+                    </td>
+                  </tr>
+                ) : (
+                  lowStockItems.map((item) => {
+                    const status = statusLabel(item.status)
+                    const barPct = stockBarWidth(item.currentStock, item.reorderLevel)
+                    return (
+                      <tr key={item.id} className="transition-colors hover:bg-surface-container-low/50">
+                        <td className="px-lg py-md font-body-md font-bold">{item.name}</td>
+                        <td className="hidden whitespace-nowrap px-lg py-md font-mono text-xs text-on-surface-variant md:table-cell">
+                          {item.sku}
+                        </td>
+                        <td className="px-lg py-md">
+                          <div className="flex items-center gap-sm">
+                            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-container">
+                              <div
+                                className={`h-full ${stockBarColor(item.currentStock, item.reorderLevel)}`}
+                                style={{ width: `${barPct}%` }}
+                              />
+                            </div>
+                            <span className="text-body-sm font-bold">{item.currentStock} unidades</span>
                           </div>
-                          <span className="text-body-sm font-bold">{item.currentStock} unidades</span>
-                        </div>
-                      </td>
-                      <td className="px-lg py-md">
-                        <span
-                          className={`rounded px-sm py-xs text-[11px] font-bold ${status.className}`}
-                        >
-                          {status.text}
-                        </span>
-                      </td>
-                      <td className="px-lg py-md">
-                        <button
-                          type="button"
-                          className="rounded p-xs text-primary transition-colors hover:bg-primary/10"
-                        >
-                          <Icon name="shopping_cart_checkout" />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
+                        </td>
+                        <td className="px-lg py-md">
+                          <span
+                            className={`rounded px-sm py-xs text-[11px] font-bold ${status.className}`}
+                          >
+                            {status.text}
+                          </span>
+                        </td>
+                        <td className="px-lg py-md">
+                          <button
+                            type="button"
+                            className="rounded p-xs text-primary transition-colors hover:bg-primary/10"
+                          >
+                            <Icon name="shopping_cart_checkout" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>

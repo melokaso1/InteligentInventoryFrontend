@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { InventoryItem } from '../types'
-import { INVENTORY_TOTAL_VALUE, inventoryItems, stockMovements } from '../data/mock'
+import { fetchInventory, fetchInventoryStats, fetchStockMovements } from '../api'
 import { Icon } from '../components/ui/Icon'
 import { formatCOP, formatCOPCompact } from '../utils/format'
 import { Modal } from '../components/ui/Modal'
@@ -13,6 +13,7 @@ import {
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
+import type { StockMovement } from '../types'
 
 const stockLevelBadge: Record<string, string> = {
   high: 'bg-primary/10 text-primary border border-primary/20',
@@ -20,31 +21,6 @@ const stockLevelBadge: Record<string, string> = {
   low: 'bg-on-tertiary-fixed-variant/10 text-on-tertiary-fixed-variant border border-outline-variant',
   critical: 'bg-error/10 text-error border border-error/20',
 }
-
-const inventoryKpis = [
-  {
-    label: 'Total de SKU',
-    value: '12,482',
-    change: '+3.2% ↑',
-    note: 'Productos activos en 14 almacenes',
-    icon: 'category',
-  },
-  {
-    label: 'Valor total del inventario',
-    value: formatCOPCompact(INVENTORY_TOTAL_VALUE),
-    change: '+0.8% ↑',
-    note: 'Valor estimado de mercado del stock',
-    icon: 'payments',
-  },
-  {
-    label: 'Artículos con stock crítico',
-    value: '24',
-    change: '-12% ↓',
-    note: 'Artículos que requieren reposición inmediata',
-    icon: 'warning',
-    critical: true,
-  },
-]
 
 const stockLevelLabels: Record<string, string> = {
   high: 'ALTO',
@@ -54,12 +30,83 @@ const stockLevelLabels: Record<string, string> = {
 }
 
 export function InventoryPage() {
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
+  const [stats, setStats] = useState({
+    totalItems: 0,
+    totalUnits: 0,
+    totalValue: 0,
+    lowStockCount: 0,
+    outOfStockCount: 0,
+  })
+  const [totalCount, setTotalCount] = useState(0)
+  const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const [inventoryResult, statsResult, movements] = await Promise.all([
+          fetchInventory({ pageSize: 50 }),
+          fetchInventoryStats(),
+          fetchStockMovements(10),
+        ])
+        if (!cancelled) {
+          setInventoryItems(inventoryResult.items)
+          setTotalCount(inventoryResult.totalCount)
+          setStats(statsResult)
+          setStockMovements(movements)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const inventoryKpis = [
+    {
+      label: 'Total de SKU',
+      value: stats.totalItems.toLocaleString('es-CO'),
+      change: `${stats.totalUnits.toLocaleString('es-CO')} uds`,
+      note: 'Productos activos en almacén',
+      icon: 'category',
+    },
+    {
+      label: 'Valor total del inventario',
+      value: formatCOPCompact(stats.totalValue),
+      change: 'Tiempo real',
+      note: 'Valor estimado de mercado del stock',
+      icon: 'payments',
+    },
+    {
+      label: 'Artículos con stock crítico',
+      value: String(stats.lowStockCount + stats.outOfStockCount),
+      change: stats.outOfStockCount > 0 ? `${stats.outOfStockCount} sin stock` : 'Controlado',
+      note: 'Artículos que requieren reposición inmediata',
+      icon: 'warning',
+      critical: stats.lowStockCount + stats.outOfStockCount > 0,
+    },
+  ]
 
   const openModal = (item: InventoryItem) => {
     setSelectedItem(item)
     setModalOpen(true)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center text-on-surface-variant">
+        Cargando inventario…
+      </div>
+    )
   }
 
   return (
@@ -120,15 +167,9 @@ export function InventoryPage() {
             </div>
             <Select className="min-w-0 w-full rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none sm:w-auto">
               <option>Todas las categorías</option>
-              <option>Electrónica</option>
-              <option>Suministros de oficina</option>
-              <option>Hardware</option>
             </Select>
             <Select className="min-w-0 w-full rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none sm:w-auto">
               <option>Todos los niveles de stock</option>
-              <option>Crítico</option>
-              <option>Bajo</option>
-              <option>Saludable</option>
             </Select>
             <button
               type="button"
@@ -222,7 +263,8 @@ export function InventoryPage() {
 
           <PaginationFooter className="p-md">
             <PaginationInfo>
-              Mostrando <span className="font-bold">1 a 5</span> de 12.482 registros
+              Mostrando <span className="font-bold">1 a {inventoryItems.length}</span> de{' '}
+              {totalCount.toLocaleString('es-CO')} registros
             </PaginationInfo>
             <PaginationControls>
               <PaginationIconButton icon="chevron_left" disabled className="disabled:opacity-30" />
@@ -236,31 +278,35 @@ export function InventoryPage() {
             <h4 className="font-headline-sm text-headline-sm text-on-surface">Movimientos recientes</h4>
           </div>
           <div className="space-y-md p-lg">
-            {stockMovements.map((m) => (
-              <div key={m.id} className="flex items-start gap-md">
-                <div
-                  className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full ${
-                    m.type === 'inbound'
-                      ? 'bg-primary-container/30 text-on-primary-container'
-                      : m.type === 'outbound'
-                        ? 'bg-error-container/20 text-error'
-                        : 'bg-warning-container/80 text-on-warning-container'
-                  }`}
-                >
-                  <Icon
-                    name={m.type === 'inbound' ? 'arrow_downward' : m.type === 'outbound' ? 'arrow_upward' : 'edit'}
-                    size={16}
-                  />
+            {stockMovements.length === 0 ? (
+              <p className="text-on-surface-variant">Sin movimientos recientes</p>
+            ) : (
+              stockMovements.map((m) => (
+                <div key={m.id} className="flex items-start gap-md">
+                  <div
+                    className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full ${
+                      m.type === 'inbound'
+                        ? 'bg-primary-container/30 text-on-primary-container'
+                        : m.type === 'outbound'
+                          ? 'bg-error-container/20 text-error'
+                          : 'bg-warning-container/80 text-on-warning-container'
+                    }`}
+                  >
+                    <Icon
+                      name={m.type === 'inbound' ? 'arrow_downward' : m.type === 'outbound' ? 'arrow_upward' : 'edit'}
+                      size={16}
+                    />
+                  </div>
+                  <div>
+                    <p className="font-body-md font-semibold">{m.detail}</p>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant">
+                      {m.sku} • {m.change}
+                    </p>
+                    <p className="mt-1 font-mono-sm text-mono-sm text-outline">{m.timestamp}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-body-md font-semibold">{m.detail}</p>
-                  <p className="font-body-sm text-body-sm text-on-surface-variant">
-                    {m.sku} • {m.change}
-                  </p>
-                  <p className="mt-1 font-mono-sm text-mono-sm text-outline">{m.timestamp}</p>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

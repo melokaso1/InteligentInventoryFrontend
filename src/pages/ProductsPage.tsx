@@ -1,19 +1,50 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Product } from '../types'
-import { products } from '../data/mock'
+import { fetchProducts, fetchProductStats } from '../api'
 import { Drawer } from '../components/ui/Drawer'
 import { Icon } from '../components/ui/Icon'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import { formatCOP } from '../utils/format'
 
-const avgUnitPrice = Math.round(
-  products.reduce((sum, p) => sum + p.price, 0) / products.length,
-)
-
 export function ProductsPage() {
+  const [products, setProducts] = useState<Product[]>([])
+  const [stats, setStats] = useState({
+    totalProducts: 0,
+    activeProducts: 0,
+    outOfStockProducts: 0,
+    totalInventoryValue: 0,
+  })
+  const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Product | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const [productsResult, statsResult] = await Promise.all([
+          fetchProducts({ pageSize: 50 }),
+          fetchProductStats(),
+        ])
+        if (!cancelled) {
+          setProducts(productsResult.items)
+          setStats(statsResult)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const avgUnitPrice =
+    stats.totalProducts > 0 ? Math.round(stats.totalInventoryValue / stats.totalProducts) : 0
 
   const openDrawer = (product: Product) => {
     setSelected(product)
@@ -23,6 +54,48 @@ export function ProductsPage() {
   const closeDrawer = () => {
     setDrawerOpen(false)
     setSelected(null)
+  }
+
+  const statCards = [
+    {
+      label: 'SKU TOTALES',
+      value: stats.totalProducts.toLocaleString('es-CO'),
+      change: 'Catálogo',
+      icon: 'inventory',
+      tone: 'primary' as const,
+    },
+    {
+      label: 'PRODUCTOS ACTIVOS',
+      value: stats.activeProducts.toLocaleString('es-CO'),
+      change:
+        stats.totalProducts > 0
+          ? `${Math.round((stats.activeProducts / stats.totalProducts) * 100)}%`
+          : '—',
+      icon: 'check_circle',
+      tone: 'tertiary' as const,
+    },
+    {
+      label: 'SIN STOCK',
+      value: String(stats.outOfStockProducts),
+      change: stats.outOfStockProducts > 0 ? 'Alta prioridad' : 'OK',
+      icon: 'warning',
+      tone: 'error' as const,
+    },
+    {
+      label: 'VALOR INVENTARIO',
+      value: formatCOP(stats.totalInventoryValue),
+      change: avgUnitPrice > 0 ? `~${formatCOP(avgUnitPrice)}/u` : '',
+      icon: 'payments',
+      tone: 'secondary' as const,
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center text-on-surface-variant">
+        Cargando productos…
+      </div>
+    )
   }
 
   return (
@@ -43,22 +116,31 @@ export function ProductsPage() {
       </div>
 
       <div className="mb-xl grid grid-cols-1 gap-md md:grid-cols-4">
-        {[
-          { label: 'SKU TOTALES', value: '1,284', change: '+12%', icon: 'inventory', tone: 'primary' },
-          { label: 'PRODUCTOS ACTIVOS', value: '1,210', change: '94.2%', icon: 'check_circle', tone: 'tertiary' },
-          { label: 'ALERTAS STOCK BAJO', value: '14', change: 'Alta prioridad', icon: 'warning', tone: 'error' },
-          { label: 'PRECIO MEDIO UNIT.', value: formatCOP(avgUnitPrice), change: '', icon: 'payments', tone: 'secondary' },
-        ].map((stat) => (
+        {statCards.map((stat) => (
           <div
             key={stat.label}
             className="rounded-xl border border-outline-variant bg-surface-container-lowest p-md shadow-sm transition-shadow hover:shadow-md"
           >
             <div className="mb-2 flex items-start justify-between">
-              <div className={`rounded-lg p-2 ${stat.tone === 'error' ? 'bg-error-container/20 text-error' : stat.tone === 'tertiary' ? 'bg-tertiary-container text-tertiary' : stat.tone === 'secondary' ? 'bg-primary-container text-primary' : 'bg-primary/10 text-primary'}`}>
+              <div
+                className={`rounded-lg p-2 ${
+                  stat.tone === 'error'
+                    ? 'bg-error-container/20 text-error'
+                    : stat.tone === 'tertiary'
+                      ? 'bg-tertiary-container text-tertiary'
+                      : stat.tone === 'secondary'
+                        ? 'bg-primary-container text-primary'
+                        : 'bg-primary/10 text-primary'
+                }`}
+              >
                 <Icon name={stat.icon} />
               </div>
               {stat.change && (
-                <span className={`text-[12px] font-bold ${stat.tone === 'error' ? 'text-error' : 'text-on-surface-variant'}`}>
+                <span
+                  className={`text-[12px] font-bold ${
+                    stat.tone === 'error' ? 'text-error' : 'text-on-surface-variant'
+                  }`}
+                >
                   {stat.change}
                 </span>
               )}
@@ -128,7 +210,7 @@ export function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-on-surface">
-              {products.slice(0, 6).map((product) => (
+              {products.map((product) => (
                 <tr
                   key={product.id}
                   onClick={() => openDrawer(product)}

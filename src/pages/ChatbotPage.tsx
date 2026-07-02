@@ -1,17 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChatMessage } from '../types'
-import { initialChatMessages, mockChatResponse } from '../data/mock'
+import {
+  getChatSessionId,
+  sendChatMessage,
+  type ChatOperationSummary,
+} from '../api'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
 
 type MobileView = 'chat' | 'summary'
 
+const WELCOME_MESSAGE: ChatMessage = {
+  id: 'welcome',
+  role: 'assistant',
+  content:
+    '¡Hola! Soy el asistente de El Plonsazo. Puedo ayudarte a consultar stock, buscar productos y realizar compras. ¿En qué te puedo ayudar?',
+  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  chips: ['Consultar stock', 'Buscar producto', 'Ver ofertas'],
+}
+
 export function ChatbotPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialChatMessages)
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE])
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [mobileView, setMobileView] = useState<MobileView>('chat')
+  const [operationSummary, setOperationSummary] = useState<ChatOperationSummary | null>(null)
+  const [chatState, setChatState] = useState('idle')
+  const [invoiceNumber, setInvoiceNumber] = useState<string | undefined>()
+  const [sessionId] = useState(() => getChatSessionId())
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const scrollBehaviorRef = useRef<ScrollBehavior>('smooth')
 
@@ -31,8 +48,8 @@ export function ChatbotPage() {
     return () => cancelAnimationFrame(frame)
   }, [messages, isTyping])
 
-  const sendMessage = (text: string) => {
-    if (!text.trim()) return
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || isTyping) return
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -46,19 +63,42 @@ export function ChatbotPage() {
     setInput('')
     setIsTyping(true)
 
-    setTimeout(() => {
+    try {
+      const result = await sendChatMessage(sessionId, text.trim())
+      const botMsg: ChatMessage = {
+        id: `bot-${Date.now()}`,
+        role: 'assistant',
+        content: result.response,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        chips: result.chips,
+      }
+      setMessages((prev) => [...prev, botMsg])
+      setChatState(result.state)
+      setOperationSummary(result.operationSummary ?? null)
+      setInvoiceNumber(result.invoiceNumber)
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content:
+            'No pude conectar con el servicio de chat. Verifica que la API .NET y el chatbot FastAPI estén en ejecución.',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ])
+    } finally {
       setIsTyping(false)
-      setMessages((prev) => [...prev, { ...mockChatResponse, id: `bot-${Date.now()}` }])
-    }, 1200)
+    }
   }
 
   const handleChipClick = (chip: string) => {
     if (chip.toLowerCase().includes('confirmar') || chip.toLowerCase().includes('confirm')) {
-      sendMessage('Sí, confirmo la compra.')
+      void sendMessage('Sí, confirmo la compra.')
     } else if (chip.toLowerCase().includes('cancelar') || chip.toLowerCase().includes('cancel')) {
-      sendMessage('Cancelar la solicitud.')
+      void sendMessage('Cancelar la solicitud.')
     } else {
-      sendMessage(chip)
+      void sendMessage(chip)
     }
   }
 
@@ -112,13 +152,19 @@ export function ChatbotPage() {
           {isTyping && <TypingIndicator />}
         </div>
 
-        <ChatInput value={input} onChange={setInput} onSend={() => sendMessage(input)} />
+        <ChatInput value={input} onChange={setInput} onSend={() => void sendMessage(input)} />
       </section>
 
       <OperationSummary
         className={
           mobileView === 'chat' ? 'hidden min-h-0 lg:flex lg:shrink-0' : 'flex min-h-0 flex-1 lg:shrink-0'
         }
+        summary={operationSummary}
+        chatState={chatState}
+        invoiceNumber={invoiceNumber}
+        onConfirm={() => void sendMessage('Sí, confirmo la compra.')}
+        onModify={() => void sendMessage('Quiero modificar el pedido.')}
+        onCancel={() => void sendMessage('Cancelar la solicitud.')}
       />
     </div>
   )

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Sale } from '../types'
-import { sales, salesPeriodTotal } from '../data/mock'
+import { fetchSales, fetchSaleMetrics } from '../api'
 import { formatCOP } from '../utils/format'
 import { DataTable } from '../components/ui/DataTable'
 import { Drawer } from '../components/ui/Drawer'
@@ -25,21 +25,67 @@ function customerInitials(name: string) {
     .toUpperCase()
 }
 
+function shortOrderId(id: string) {
+  return id.slice(0, 8).toUpperCase()
+}
+
 export function SalesPage() {
+  const [sales, setSales] = useState<Sale[]>([])
+  const [metrics, setMetrics] = useState({
+    totalSales: 0,
+    totalRevenue: 0,
+    chatbotSales: 0,
+    manualSales: 0,
+  })
+  const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Sale | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [originFilter, setOriginFilter] = useState<'all' | 'manual' | 'chatbot'>('all')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      try {
+        const [salesResult, metricsResult] = await Promise.all([
+          fetchSales({
+            origin: originFilter === 'all' ? undefined : originFilter,
+            pageSize: 50,
+          }),
+          fetchSaleMetrics(),
+        ])
+        if (!cancelled) {
+          setSales(salesResult.items)
+          setMetrics(metricsResult)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [originFilter])
 
   const openDrawer = (sale: Sale) => {
     setSelected(sale)
     setDrawerOpen(true)
   }
 
-  const filteredSales =
-    originFilter === 'all' ? sales : sales.filter((s) => s.origin === originFilter)
+  const orderCount = sales.length
+  const periodTotal = metrics.totalRevenue
+  const avgTicket = orderCount > 0 ? periodTotal / orderCount : 0
 
-  const orderCount = filteredSales.length
-  const avgTicket = orderCount > 0 ? salesPeriodTotal / orderCount : 0
+  if (loading && sales.length === 0) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center text-on-surface-variant">
+        Cargando ventas…
+      </div>
+    )
+  }
 
   return (
     <>
@@ -97,8 +143,8 @@ export function SalesPage() {
         <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2 lg:grid-cols-3">
           <KpiCard
             label="Ventas totales (período)"
-            value={formatCOP(salesPeriodTotal)}
-            change="+12,5%"
+            value={formatCOP(periodTotal)}
+            change={`${metrics.totalSales} pedidos`}
             changeType="positive"
             icon="payments"
             iconBg="bg-primary-container"
@@ -106,7 +152,7 @@ export function SalesPage() {
           />
           <KpiCard
             label="Pedidos"
-            value={orderCount.toLocaleString()}
+            value={orderCount.toLocaleString('es-CO')}
             change={`${originFilter === 'all' ? 'Todos' : originLabels[originFilter]}`}
             changeType="neutral"
             icon="shopping_cart"
@@ -129,7 +175,7 @@ export function SalesPage() {
             <h4 className="font-headline-sm text-headline-sm text-on-surface">Registros de ventas</h4>
           </div>
           <DataTable
-            data={filteredSales}
+            data={sales}
             getRowId={(row) => row.id}
             onRowClick={openDrawer}
             columns={[
@@ -138,7 +184,7 @@ export function SalesPage() {
                 header: 'ID de pedido',
                 nowrap: true,
                 render: (row) => (
-                  <span className="font-mono text-xs font-bold text-primary">#{row.id}</span>
+                  <span className="font-mono text-xs font-bold text-primary">#{shortOrderId(row.id)}</span>
                 ),
               },
               {
@@ -206,7 +252,7 @@ export function SalesPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         title="Detalles de la venta"
-        subtitle={selected?.id}
+        subtitle={selected ? shortOrderId(selected.id) : undefined}
         width="500px"
         footer={
           <button

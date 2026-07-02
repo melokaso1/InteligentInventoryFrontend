@@ -7,6 +7,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     allowedHosts: ['unhumanistic-maryann-stonefly.ngrok-free.dev'],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5151',
+        changeOrigin: true,
+      },
+    },
     watch: {
       ignored: ['**/design/**'],
     },

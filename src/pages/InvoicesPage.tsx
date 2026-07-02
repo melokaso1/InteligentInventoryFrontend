@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Invoice } from '../types'
-import { INVOICE_STATS, invoices } from '../data/mock'
+import { fetchInvoices, fetchInvoiceStats } from '../api'
 import { Icon } from '../components/ui/Icon'
 import { formatCOP } from '../utils/format'
 import {
@@ -11,13 +11,6 @@ import {
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { StatusBadge } from '../components/ui/StatusBadge'
-
-const invoiceStats = [
-  { label: 'Cuentas por cobrar', value: formatCOP(INVOICE_STATS.receivables), tone: 'text-primary' },
-  { label: 'Pagado este mes', value: formatCOP(INVOICE_STATS.paidThisMonth), tone: 'text-on-primary-container' },
-  { label: 'Importe vencido', value: formatCOP(INVOICE_STATS.overdue), tone: 'text-error' },
-  { label: 'Borradores pendientes', value: '18', tone: 'text-tertiary' },
-]
 
 const keyStatLabels = new Set(['Cuentas por cobrar', 'Importe vencido'])
 
@@ -54,7 +47,7 @@ function InvoicePreviewPanel({
             </div>
             <div className="text-right">
               <h6 className="font-label-md uppercase tracking-widest text-on-surface-variant">Factura</h6>
-              <p className="font-mono-sm font-bold text-on-surface">{selected.id}</p>
+              <p className="font-mono-sm font-bold text-on-surface">{selected.id.slice(0, 8).toUpperCase()}</p>
             </div>
           </div>
           <table className="mb-lg w-full text-body-sm">
@@ -119,9 +112,58 @@ function InvoicePreviewPanel({
 }
 
 export function InvoicesPage() {
+  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [draftCount, setDraftCount] = useState(0)
+  const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const [invoicesResult, statsResult] = await Promise.all([
+          fetchInvoices({ pageSize: 50 }),
+          fetchInvoiceStats(),
+        ])
+        if (!cancelled) {
+          setInvoices(invoicesResult.items)
+          setTotalCount(invoicesResult.totalCount)
+          setDraftCount(statsResult.draftInvoices)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const invoiceStats = useMemo(() => {
+    const receivables = invoices
+      .filter((inv) => inv.status === 'pending' || inv.status === 'overdue')
+      .reduce((sum, inv) => sum + inv.total, 0)
+    const paidThisMonth = invoices
+      .filter((inv) => inv.status === 'paid')
+      .reduce((sum, inv) => sum + inv.total, 0)
+    const overdue = invoices
+      .filter((inv) => inv.status === 'overdue')
+      .reduce((sum, inv) => sum + inv.total, 0)
+
+    return [
+      { label: 'Cuentas por cobrar', value: formatCOP(receivables), tone: 'text-primary' },
+      { label: 'Pagado este mes', value: formatCOP(paidThisMonth), tone: 'text-on-primary-container' },
+      { label: 'Importe vencido', value: formatCOP(overdue), tone: 'text-error' },
+      { label: 'Borradores pendientes', value: String(draftCount), tone: 'text-tertiary' },
+    ]
+  }, [invoices, draftCount])
+
   const selected = invoices.find((inv) => inv.id === selectedId)
 
   const handleRowClick = (id: string) => {
@@ -189,6 +231,14 @@ export function InvoicesPage() {
     </div>
   )
 
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center text-on-surface-variant">
+        Cargando facturas…
+      </div>
+    )
+  }
+
   return (
     <div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-x-hidden lg:flex-row lg:overflow-hidden">
       <section
@@ -248,7 +298,7 @@ export function InvoicesPage() {
                 >
                   <div className="flex items-start justify-between gap-sm">
                     <div className="min-w-0 flex-1">
-                      <p className="font-mono-sm font-bold text-primary">{row.id}</p>
+                      <p className="font-mono-sm font-bold text-primary">{row.id.slice(0, 8).toUpperCase()}</p>
                       <p className="mt-1 truncate font-body-md text-on-surface">{row.client}</p>
                     </div>
                     <StatusBadge variant={row.status} />
@@ -302,7 +352,7 @@ export function InvoicesPage() {
                       className={invoiceRowClass(row.id)}
                     >
                       <td className="whitespace-nowrap px-md py-4 font-mono-sm font-bold text-primary">
-                        {row.id}
+                        {row.id.slice(0, 8).toUpperCase()}
                       </td>
                       <td className="px-md py-4 font-body-md text-on-surface">{row.client}</td>
                       <td className="whitespace-nowrap px-md py-4 font-body-md text-on-surface-variant">
@@ -325,7 +375,7 @@ export function InvoicesPage() {
           </div>
           <PaginationFooter>
             <PaginationInfo>
-              Mostrando 1-{invoices.length} de 128 facturas
+              Mostrando 1-{invoices.length} de {totalCount} facturas
             </PaginationInfo>
             <PaginationControls>
               <PaginationIconButton icon="chevron_left" disabled />
@@ -335,7 +385,6 @@ export function InvoicesPage() {
         </div>
       </section>
 
-      {/* Mobile: full-screen slide-over preview */}
       <div
         className={`fixed inset-0 z-[100] transition-all duration-300 lg:hidden ${
           previewOpen && selected ? 'visible pointer-events-auto' : 'invisible pointer-events-none'
@@ -358,7 +407,6 @@ export function InvoicesPage() {
         </aside>
       </div>
 
-      {/* Desktop: slide-from-right side panel */}
       <div
         className={`relative hidden shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out lg:block ${
           previewOpen ? 'lg:w-2/5' : 'w-0'
