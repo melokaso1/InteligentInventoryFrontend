@@ -74,6 +74,8 @@ interface ApiSale {
   grandTotal: number
   orderNumber: string
   invoiceNumber?: string
+  deliveryAddress?: string
+  deliveryCity?: string
 }
 
 interface ApiSaleMetrics {
@@ -100,6 +102,9 @@ interface ApiInvoice {
   total: number
   invoiceNumber: string
   source?: 'manual' | 'chatbot' | 'sale'
+  saleId?: string
+  deliveryAddress?: string
+  deliveryCity?: string
 }
 
 interface CreateManualInvoicePayload {
@@ -282,6 +287,8 @@ function mapSale(s: ApiSale): Sale {
     grandTotal: s.grandTotal,
     orderNumber: s.orderNumber,
     invoiceNumber: s.invoiceNumber,
+    deliveryAddress: s.deliveryAddress,
+    deliveryCity: s.deliveryCity,
   }
 }
 

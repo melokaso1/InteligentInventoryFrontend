@@ -71,6 +71,8 @@ export interface Sale {
   grandTotal: number
   orderNumber?: string
   invoiceNumber?: string
+  deliveryAddress?: string
+  deliveryCity?: string
 }
 
 export type InvoiceStatus = 'paid' | 'pending' | 'overdue' | 'draft'
@@ -96,6 +98,9 @@ export interface Invoice {
   tax: number
   total: number
   source?: InvoiceSource
+  saleId?: string
+  deliveryAddress?: string
+  deliveryCity?: string
 }
 
 export interface ActivityItem {
