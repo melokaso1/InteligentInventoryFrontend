@@ -21,6 +21,8 @@ Panel de administración ERP para **El Plonsazo Store**: dashboard, catálogo, i
 pnpm install
 ```
 
+El repositorio incluye **`.env`** con valores de desarrollo listos para usar (no hace falta copiar desde `.env.example`). En local, `VITE_API_URL` va vacío para que el proxy de Vite reenvíe `/api` a la API .NET.
+
 ## Desarrollo
 
 ```bash

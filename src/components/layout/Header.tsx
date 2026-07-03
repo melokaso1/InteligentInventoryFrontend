@@ -34,8 +34,8 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
         <Logo
           size="sm"
           showText
-          className="min-w-0"
-          textClassName="truncate font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+          className="shrink-0 lg:hidden"
+          textClassName="font-headline-sm text-headline-sm font-extrabold text-on-primary-fixed dark:text-primary"
         />
         <div className="relative hidden lg:block">
           <Icon

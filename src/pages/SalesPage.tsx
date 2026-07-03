@@ -11,6 +11,8 @@ import { KpiCard } from '../components/ui/KpiCard'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import { StatusBadge } from '../components/ui/StatusBadge'
+import { Toast } from '../components/ui/Toast'
+import { useToast } from '../hooks/useToast'
 
 const originLabels: Record<'all' | 'manual' | 'chatbot', string> = {
   all: 'Todos',
@@ -33,6 +35,7 @@ function shortOrderId(id: string) {
 
 export function SalesPage() {
   const navigate = useNavigate()
+  const { toastMessage, showToast, dismissToast } = useToast()
   const [sales, setSales] = useState<Sale[]>([])
   const [metrics, setMetrics] = useState({
     totalSales: 0,
@@ -93,7 +96,7 @@ export function SalesPage() {
     try {
       await createSaleInvoice(sale.id)
       await loadSales()
-      setInvoiceFeedback({ type: 'success', message: 'Factura generada correctamente.' })
+      showToast('Factura generada correctamente.')
       setDrawerOpen(false)
       navigate('/invoices')
     } catch (err) {
@@ -126,6 +129,8 @@ export function SalesPage() {
   return (
     <>
       <div className="min-w-0 space-y-gutter">
+        <Toast message={toastMessage} onDismiss={dismissToast} />
+
         <div className="flex min-w-0 max-w-full flex-col gap-md overflow-hidden rounded-xl border border-outline-variant bg-surface p-md shadow-sm md:flex-row md:flex-wrap md:items-end">
             <div className="min-w-0 w-full md:min-w-[200px] md:flex-1">
               <label className="mb-1 block font-label-md text-label-md text-on-surface-variant">
@@ -210,6 +215,16 @@ export function SalesPage() {
           <div className="border-b border-outline-variant p-lg">
             <h4 className="font-headline-sm text-headline-sm text-on-surface">Registros de ventas</h4>
           </div>
+          {invoiceFeedback ? (
+            <p
+              className={`border-b border-outline-variant px-lg py-sm text-body-sm ${
+                invoiceFeedback.type === 'error' ? 'text-error' : 'text-primary'
+              }`}
+              role={invoiceFeedback.type === 'error' ? 'alert' : 'status'}
+            >
+              {invoiceFeedback.message}
+            </p>
+          ) : null}
           <DataTable
             data={sales}
             getRowId={(row) => row.id}
@@ -270,21 +285,37 @@ export function SalesPage() {
                 className: 'text-right',
                 render: (row) => (
                   <div
-                    className="flex justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100"
+                    className="flex justify-end gap-2 opacity-80 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
                       type="button"
-                      disabled={row.status === 'invoiced' || generatingId === row.id}
-                      title={row.status === 'invoiced' ? 'Ya facturada' : 'Generar factura'}
-                      onClick={() => void handleGenerateInvoice(row)}
-                      className="rounded-lg p-2 text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Ver detalle"
+                      onClick={() => openDrawer(row)}
+                      className="rounded-lg p-2 text-primary hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     >
-                      <Icon name="receipt_long" />
+                      <Icon name="description" />
                     </button>
-                    <button type="button" className="rounded-lg p-2 text-primary hover:bg-primary/10">
-                      <Icon name="settings_suggest" />
-                    </button>
+                    {row.status === 'invoiced' ? (
+                      <button
+                        type="button"
+                        title="Ver factura"
+                        onClick={() => navigate('/invoices')}
+                        className="rounded-lg p-2 text-primary hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                      >
+                        <Icon name="receipt" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={generatingId === row.id}
+                        title="Generar factura"
+                        onClick={() => void handleGenerateInvoice(row)}
+                        className="rounded-lg p-2 text-primary hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Icon name="request_quote" />
+                      </button>
+                    )}
                   </div>
                 ),
               },
@@ -311,14 +342,21 @@ export function SalesPage() {
             ) : null}
             <button
               type="button"
-              disabled={selectedGenerating || selectedAlreadyInvoiced}
-              onClick={() => selected && void handleGenerateInvoice(selected)}
+              disabled={selectedGenerating}
+              onClick={() => {
+                if (!selected) return
+                if (selectedAlreadyInvoiced) {
+                  navigate('/invoices')
+                  return
+                }
+                void handleGenerateInvoice(selected)
+              }}
               className="w-full rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               {selectedGenerating
                 ? 'Generando factura…'
                 : selectedAlreadyInvoiced
-                  ? 'Factura ya generada'
+                  ? 'Ver factura'
                   : 'Generar factura'}
             </button>
           </div>

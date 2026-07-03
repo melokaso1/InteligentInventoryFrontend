@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Invoice } from '../types'
-import { createInvoice, fetchInvoicePdf, fetchInvoices, fetchInvoiceStats } from '../api'
+import { fetchInvoicePdf, fetchInvoices, fetchInvoiceStats, payInvoice } from '../api'
+import { CreateManualInvoiceDrawer } from '../components/invoices/CreateManualInvoiceDrawer'
+import { canPayInvoice, PayInvoiceModal, type PaymentMethod } from '../components/invoices/PayInvoiceModal'
 import { Icon } from '../components/ui/Icon'
-import { Drawer } from '../components/ui/Drawer'
 import { Modal } from '../components/ui/Modal'
 import { formatCOP, formatDate } from '../utils/format'
+import { downloadBlob } from '../utils/download'
 import {
   PaginationControls,
   PaginationFooter,
@@ -13,6 +15,8 @@ import {
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { StatusBadge } from '../components/ui/StatusBadge'
+import { Toast } from '../components/ui/Toast'
+import { useToast } from '../hooks/useToast'
 
 const keyStatLabels = new Set(['Cuentas por cobrar', 'Importe vencido'])
 
@@ -23,6 +27,16 @@ function normalizeFilenamePart(value: string) {
     .replace(/-+/g, '-')
     .replace(/(^-|-$)/g, '')
     .slice(0, 40)
+}
+
+function invoiceDownloadFilename(invoice: Invoice, serverFilename?: string) {
+  if (serverFilename) {
+    const withoutExtension = serverFilename.replace(/\.(pdf|txt)$/i, '')
+    return `${withoutExtension}.txt`
+  }
+
+  const clientPart = normalizeFilenamePart(invoice.client) || 'cliente'
+  return `factura-${clientPart}-${invoice.id.slice(0, 8).toLowerCase()}.txt`
 }
 
 function invoiceMailto(to: string, invoice: Invoice) {
@@ -48,29 +62,35 @@ function invoiceMailto(to: string, invoice: Invoice) {
 function InvoicePreviewPanel({
   selected,
   onClose,
+  onDownloadSuccess,
+  onPay,
+  paying,
 }: {
   selected: Invoice
   onClose: () => void
+  onDownloadSuccess?: (filename: string) => void
+  onPay?: () => void
+  paying?: boolean
 }) {
   const previewRef = useRef<HTMLDivElement>(null)
-  const [pdfLoading, setPdfLoading] = useState(false)
+  const [downloadLoading, setDownloadLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const handleDownloadPdf = async () => {
-    setPdfLoading(true)
+  const handleDownload = async () => {
+    setDownloadLoading(true)
     setActionError(null)
     try {
       const { blob, filename } = await fetchInvoicePdf(selected.id)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(url)
+      if (blob.size === 0) {
+        throw new Error('El archivo de factura está vacío.')
+      }
+      const downloadName = invoiceDownloadFilename(selected, filename)
+      downloadBlob(blob, downloadName)
+      onDownloadSuccess?.(downloadName)
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo descargar el PDF.')
+      setActionError(err instanceof Error ? err.message : 'No se pudo descargar la factura.')
     } finally {
-      setPdfLoading(false)
+      setDownloadLoading(false)
     }
   }
 
@@ -113,7 +133,7 @@ function InvoicePreviewPanel({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between border-b border-outline-variant p-gutter">
+      <div className="flex shrink-0 items-center justify-between border-b border-outline-variant px-lg py-md">
         <h4 className="font-headline-sm text-headline-sm text-on-surface">Vista previa</h4>
         <button
           type="button"
@@ -124,10 +144,10 @@ function InvoicePreviewPanel({
           <Icon name="close" />
         </button>
       </div>
-      <div className="flex-1 space-y-lg overflow-y-auto p-gutter">
+      <div className="flex flex-1 flex-col gap-lg overflow-y-auto p-lg pb-lg">
         <div
           ref={previewRef}
-          className="invoice-preview-canvas rounded-xl border border-outline-variant p-xl shadow-sm"
+          className="invoice-preview-canvas rounded-xl border border-outline-variant p-xl pb-xl shadow-sm"
         >
           <div className="mb-xl flex items-start justify-between border-b border-outline-variant pb-md">
             <div>
@@ -166,7 +186,7 @@ function InvoicePreviewPanel({
               ))}
             </tbody>
           </table>
-          <div className="space-y-sm border-t border-outline-variant pt-md text-body-sm">
+          <div className="space-y-sm border-t border-outline-variant pt-md pb-sm text-body-sm">
             <div className="flex justify-between text-on-surface">
               <span>Subtotal</span>
               <span className="font-mono-sm">{formatCOP(selected.subtotal)}</span>
@@ -181,20 +201,31 @@ function InvoicePreviewPanel({
             </div>
           </div>
         </div>
-        <div className="flex flex-col gap-sm sm:flex-row">
+        <div className="flex shrink-0 flex-col gap-md pt-sm sm:flex-row sm:flex-wrap">
+          {canPayInvoice(selected) && onPay ? (
+            <button
+              type="button"
+              onClick={onPay}
+              disabled={paying || downloadLoading}
+              className="flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Icon name="payments" size={16} />
+              {paying ? 'Procesando…' : 'Marcar como pagada'}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => void handleDownloadPdf()}
-            disabled={pdfLoading}
+            onClick={() => void handleDownload()}
+            disabled={downloadLoading}
             className="flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Icon name="download" size={16} />
-            {pdfLoading ? 'Descargando…' : 'Descargar PDF'}
+            {downloadLoading ? 'Descargando…' : 'Descargar factura'}
           </button>
           <button
             type="button"
             onClick={handlePrint}
-            disabled={pdfLoading}
+            disabled={downloadLoading}
             className="flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Icon name="print" size={16} />
@@ -203,7 +234,7 @@ function InvoicePreviewPanel({
           <button
             type="button"
             onClick={handleSend}
-            disabled={pdfLoading}
+            disabled={downloadLoading}
             className="flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Icon name="send" size={16} />
@@ -221,6 +252,7 @@ function InvoicePreviewPanel({
 }
 
 export function InvoicesPage() {
+  const { toastMessage, showToast, dismissToast } = useToast()
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [draftCount, setDraftCount] = useState(0)
@@ -231,20 +263,16 @@ export function InvoicesPage() {
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false)
   const [creatingInvoice, setCreatingInvoice] = useState(false)
   const [createFormError, setCreateFormError] = useState<string | null>(null)
-  const [createForm, setCreateForm] = useState({
-    client: '',
-    billingNote: '',
-    date: new Date().toISOString().slice(0, 10),
-    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    lineDescription: '',
-    quantity: 1,
-    unitPrice: 0,
-  })
   const [rowDownloadId, setRowDownloadId] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null)
   const [emailModalOpen, setEmailModalOpen] = useState(false)
   const [emailTo, setEmailTo] = useState('')
   const [emailInvoiceId, setEmailInvoiceId] = useState<string | null>(null)
   const [emailError, setEmailError] = useState<string | null>(null)
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [payInvoiceTarget, setPayInvoiceTarget] = useState<Invoice | null>(null)
+  const [payingId, setPayingId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -335,21 +363,26 @@ export function InvoicesPage() {
     setEmailModalOpen(false)
   }
 
-  const downloadInvoicePdf = async (invoice: Invoice) => {
+  const showDownloadSuccess = (filename: string) => {
+    setDownloadError(null)
+    setDownloadSuccess(`Factura descargada: ${filename}`)
+    window.setTimeout(() => setDownloadSuccess(null), 4000)
+  }
+
+  const downloadInvoice = async (invoice: Invoice) => {
     if (rowDownloadId) return
     setRowDownloadId(invoice.id)
+    setDownloadError(null)
     try {
       const { blob, filename } = await fetchInvoicePdf(invoice.id)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download =
-        filename ||
-        `factura-${normalizeFilenamePart(invoice.client) || 'cliente'}-${invoice.id.slice(0, 8).toLowerCase()}.pdf`
-      link.click()
-      URL.revokeObjectURL(url)
+      if (blob.size === 0) {
+        throw new Error('El archivo de factura está vacío.')
+      }
+      const downloadName = invoiceDownloadFilename(invoice, filename)
+      downloadBlob(blob, downloadName)
+      showDownloadSuccess(downloadName)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'No se pudo descargar el PDF.')
+      setDownloadError(err instanceof Error ? err.message : 'No se pudo descargar la factura.')
     } finally {
       setRowDownloadId(null)
     }
@@ -365,18 +398,6 @@ export function InvoicesPage() {
   }
 
   const openCreateDrawer = () => {
-    const todayStr = new Date().toISOString().slice(0, 10)
-    const dueStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-
-    setCreateForm({
-      client: '',
-      billingNote: '',
-      date: todayStr,
-      dueDate: dueStr,
-      lineDescription: '',
-      quantity: 1,
-      unitPrice: 0,
-    })
     setCreateFormError(null)
     setCreateDrawerOpen(true)
     setPreviewOpen(false)
@@ -388,59 +409,64 @@ export function InvoicesPage() {
     setCreateFormError(null)
   }
 
-  const handleCreateInvoice = async () => {
-    if (creatingInvoice) return
-
-    const client = createForm.client.trim()
-    const lineDescription = createForm.lineDescription.trim()
-    if (!client) {
-      setCreateFormError('Ingresa el nombre del cliente.')
-      return
-    }
-    if (!lineDescription) {
-      setCreateFormError('Ingresa la descripción del item.')
-      return
-    }
-
+  const handleManualInvoiceCreated = async (created: Invoice) => {
+    await reloadInvoices()
+    setSelectedId(created.id)
+    setPreviewOpen(true)
+    setCreateDrawerOpen(false)
     setCreateFormError(null)
-    setCreatingInvoice(true)
-    try {
-      const created = await createInvoice({
-        client,
-        billingNote: createForm.billingNote.trim(),
-        date: createForm.date,
-        dueDate: createForm.dueDate,
-        lineItems: [
-          {
-            description: lineDescription,
-            quantity: Math.max(1, createForm.quantity),
-            unitPrice: Math.max(0, createForm.unitPrice),
-          },
-        ],
-      })
+    showToast('Factura creada. Puedes imprimirla desde la vista previa.')
+  }
 
+  const openPayModal = (invoice: Invoice) => {
+    setPayInvoiceTarget(invoice)
+    setPayModalOpen(true)
+  }
+
+  const closePayModal = () => {
+    setPayModalOpen(false)
+    setPayInvoiceTarget(null)
+  }
+
+  const handlePayInvoice = async (paymentMethod: PaymentMethod) => {
+    if (!payInvoiceTarget) return
+
+    setPayingId(payInvoiceTarget.id)
+    try {
+      await payInvoice(payInvoiceTarget.id, paymentMethod)
       await reloadInvoices()
-      setSelectedId(created.id)
-      setPreviewOpen(true)
-      closeCreateDrawer()
-    } catch (err) {
-      setCreateFormError(err instanceof Error ? err.message : 'No se pudo crear la factura.')
+      closePayModal()
+      showToast('Factura marcada como pagada.')
     } finally {
-      setCreatingInvoice(false)
+      setPayingId(null)
     }
   }
 
   const invoiceActions = (row: Invoice) => (
     <div className="flex items-center gap-2" aria-label="Acciones">
+      {canPayInvoice(row) ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            openPayModal(row)
+          }}
+          disabled={payingId === row.id}
+          className="rounded-lg border border-primary/40 bg-primary/10 p-2 text-primary transition-all hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+          title="Marcar como pagada"
+        >
+          <Icon name="payments" size={20} />
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation()
-          void downloadInvoicePdf(row)
+          void downloadInvoice(row)
         }}
         disabled={rowDownloadId === row.id}
         className="rounded-lg border border-outline-variant p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-        title={rowDownloadId === row.id ? 'Descargando…' : 'Descargar PDF'}
+        title={rowDownloadId === row.id ? 'Descargando…' : 'Descargar factura'}
       >
         <Icon name="download" size={20} />
       </button>
@@ -503,6 +529,7 @@ export function InvoicesPage() {
 
   return (
     <div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-x-hidden lg:flex-row lg:overflow-hidden">
+      <Toast message={toastMessage} onDismiss={dismissToast} className="absolute left-md right-md top-md z-[110]" />
       <section
         className={`flex min-w-0 w-full flex-col lg:overflow-hidden border-b border-outline-variant bg-surface transition-[width] duration-300 ease-in-out lg:border-b-0 lg:border-r ${
           previewOpen ? 'lg:w-3/5' : 'lg:w-full'
@@ -520,9 +547,27 @@ export function InvoicesPage() {
             </div>
             <PrimaryActionButton size="default" className="shrink-0" onClick={openCreateDrawer} disabled={creatingInvoice}>
               <span className="md:hidden">NUEVA FACTURA</span>
-              <span className="hidden md:inline">CREAR NUEVA FACTURA</span>
+              <span className="hidden md:inline">CREAR FACTURA MANUAL</span>
             </PrimaryActionButton>
           </div>
+
+          {createFormError ? (
+            <p className="rounded-lg border border-error/30 bg-error/10 px-md py-sm text-body-sm text-error" role="alert">
+              {createFormError}
+            </p>
+          ) : null}
+
+          {downloadError ? (
+            <p className="rounded-lg border border-error/30 bg-error/10 px-md py-sm text-body-sm text-error" role="alert">
+              {downloadError}
+            </p>
+          ) : null}
+
+          {downloadSuccess ? (
+            <p className="rounded-lg border border-primary/30 bg-primary-container/20 px-md py-sm text-body-sm text-on-surface" role="status">
+              {downloadSuccess}
+            </p>
+          ) : null}
 
           <div className="md:hidden">
             <div className="mb-1.5 flex items-center justify-between">
@@ -589,21 +634,35 @@ export function InvoicesPage() {
             </div>
 
             <div className="hidden min-w-0 overflow-x-auto md:block">
-              <table className="w-full min-w-[720px] border-collapse text-left">
+              <table className="w-full min-w-[800px] border-collapse text-left">
+                <colgroup>
+                  <col className="w-[7%]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
+                </colgroup>
                 <thead className="sticky top-0 z-10 bg-surface-container">
                   <tr>
-                    {['Factura #', 'Nombre del cliente', 'Fecha de emisión', 'Total adeudado', 'Estado de pago', 'Acciones'].map(
-                      (col, i) => (
-                        <th
-                          key={col}
-                          className={`whitespace-nowrap border-b border-outline-variant px-md py-3 font-label-md text-label-md uppercase text-on-surface-variant ${
-                            i === 3 ? 'text-right' : i === 5 ? 'text-center' : ''
-                          }`}
-                        >
-                          {col}
-                        </th>
-                      ),
-                    )}
+                    {(
+                      [
+                        { label: 'Factura #', align: '' },
+                        { label: 'Nombre del cliente', align: '' },
+                        { label: 'Fecha de emisión', align: '' },
+                        { label: 'Total adeudado', align: 'text-right', title: 'Total adeudado' },
+                        { label: 'Estado', align: '', title: 'Estado de pago' },
+                        { label: 'Acciones', align: 'text-center' },
+                      ] as const
+                    ).map((col) => (
+                      <th
+                        key={col.label}
+                        title={'title' in col ? col.title : undefined}
+                        className={`whitespace-nowrap border-b border-outline-variant px-gutter py-3 font-label-md text-label-md uppercase text-on-surface-variant ${col.align}`}
+                      >
+                        {col.label}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/40">
@@ -613,20 +672,20 @@ export function InvoicesPage() {
                       onClick={() => handleRowClick(row.id)}
                       className={invoiceRowClass(row.id)}
                     >
-                      <td className="whitespace-nowrap px-md py-4 font-mono-sm font-bold text-primary">
+                      <td className="whitespace-nowrap px-gutter py-4 font-mono-sm font-bold text-primary">
                         {row.id.slice(0, 8).toUpperCase()}
                       </td>
-                      <td className="px-md py-4 font-body-md text-on-surface">{row.client}</td>
-                      <td className="whitespace-nowrap px-md py-4 font-body-md text-on-surface-variant">
+                      <td className="px-gutter py-4 font-body-md text-on-surface">{row.client}</td>
+                      <td className="whitespace-nowrap px-gutter py-4 font-body-md text-on-surface-variant">
                         {formatDate(row.date)}
                       </td>
-                      <td className="whitespace-nowrap px-md py-4 text-right font-body-md font-bold text-on-surface">
+                      <td className="whitespace-nowrap px-gutter py-4 text-right font-body-md font-bold text-on-surface">
                         {formatCOP(row.total)}
                       </td>
-                      <td className="whitespace-nowrap px-md py-4">
+                      <td className="whitespace-nowrap px-gutter py-4">
                         <StatusBadge variant={row.status} />
                       </td>
-                      <td className="whitespace-nowrap px-md py-4">
+                      <td className="whitespace-nowrap px-gutter py-4">
                         <div className="flex items-center justify-center">{invoiceActions(row)}</div>
                       </td>
                     </tr>
@@ -665,7 +724,15 @@ export function InvoicesPage() {
             previewOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
         >
-          {selected ? <InvoicePreviewPanel selected={selected} onClose={handleClosePreview} /> : null}
+          {selected ? (
+            <InvoicePreviewPanel
+              selected={selected}
+              onClose={handleClosePreview}
+              onDownloadSuccess={showDownloadSuccess}
+              onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
+              paying={payingId === selected.id}
+            />
+          ) : null}
         </aside>
       </div>
 
@@ -682,119 +749,26 @@ export function InvoicesPage() {
               : 'pointer-events-none translate-x-full'
           }`}
         >
-          {selected ? <InvoicePreviewPanel selected={selected} onClose={handleClosePreview} /> : null}
+          {selected ? (
+            <InvoicePreviewPanel
+              selected={selected}
+              onClose={handleClosePreview}
+              onDownloadSuccess={showDownloadSuccess}
+              onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
+              paying={payingId === selected.id}
+            />
+          ) : null}
         </aside>
       </div>
 
-      <Drawer
+      <CreateManualInvoiceDrawer
         open={createDrawerOpen}
+        creating={creatingInvoice}
         onClose={closeCreateDrawer}
-        title="Crear nueva factura"
-        subtitle="Nueva factura standalone"
-        footer={
-          <div className="flex flex-col gap-md">
-            {createFormError ? (
-              <p className="text-body-sm text-error" role="alert">
-                {createFormError}
-              </p>
-            ) : null}
-            <div className="flex gap-md">
-              <button
-                type="button"
-                onClick={closeCreateDrawer}
-                disabled={creatingInvoice}
-                className="flex-1 rounded-lg border border-outline-variant py-2 font-label-md text-label-md disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleCreateInvoice()}
-                disabled={creatingInvoice}
-                className="flex-1 rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary disabled:opacity-50"
-              >
-                {creatingInvoice ? 'Creando…' : 'Crear factura'}
-              </button>
-            </div>
-          </div>
-        }
-      >
-        <div className="space-y-lg">
-          <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
-            <div>
-              <label className="text-xs font-semibold uppercase text-on-surface-variant">Cliente</label>
-              <input
-                value={createForm.client}
-                onChange={(e) => setCreateForm((f) => ({ ...f, client: e.target.value }))}
-                className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-                placeholder="Nombre del cliente"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold uppercase text-on-surface-variant">Fecha</label>
-              <input
-                type="date"
-                value={createForm.date}
-                onChange={(e) => setCreateForm((f) => ({ ...f, date: e.target.value }))}
-                className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold uppercase text-on-surface-variant">Vencimiento</label>
-              <input
-                type="date"
-                value={createForm.dueDate}
-                onChange={(e) => setCreateForm((f) => ({ ...f, dueDate: e.target.value }))}
-                className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold uppercase text-on-surface-variant">Cantidad</label>
-              <input
-                type="number"
-                min={1}
-                value={createForm.quantity}
-                onChange={(e) => setCreateForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
-                className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold uppercase text-on-surface-variant">Item</label>
-            <div className="mt-1 grid grid-cols-1 gap-md sm:grid-cols-[1fr_160px_160px]">
-              <input
-                value={createForm.lineDescription}
-                onChange={(e) => setCreateForm((f) => ({ ...f, lineDescription: e.target.value }))}
-                className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-                placeholder="Descripción del servicio"
-              />
-              <input
-                type="number"
-                min={0}
-                value={createForm.unitPrice}
-                onChange={(e) => setCreateForm((f) => ({ ...f, unitPrice: Number(e.target.value) }))}
-                className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-                placeholder="Precio unitario"
-              />
-              <div className="flex items-end pb-1">
-                <span className="text-xs font-semibold text-on-surface-variant">COP</span>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold uppercase text-on-surface-variant">Nota</label>
-            <textarea
-              value={createForm.billingNote}
-              onChange={(e) => setCreateForm((f) => ({ ...f, billingNote: e.target.value }))}
-              rows={4}
-              className="mt-1 w-full resize-none rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-        </div>
-      </Drawer>
+        onCreatingChange={setCreatingInvoice}
+        onCreated={(invoice) => void handleManualInvoiceCreated(invoice)}
+        onError={setCreateFormError}
+      />
 
       <Modal
         open={emailModalOpen}
@@ -842,6 +816,14 @@ export function InvoicesPage() {
           ) : null}
         </div>
       </Modal>
+
+      <PayInvoiceModal
+        open={payModalOpen}
+        invoice={payInvoiceTarget}
+        onClose={closePayModal}
+        onConfirm={handlePayInvoice}
+        adminMode
+      />
     </div>
   )
 }

@@ -9,9 +9,9 @@ interface LogoProps {
 }
 
 const SIZE_HEIGHT: Record<'sm' | 'md' | 'lg', string> = {
-  sm: 'h-8',
-  md: 'h-10',
-  lg: 'h-12',
+  sm: 'h-10',
+  md: 'h-14',
+  lg: 'h-20',
 }
 
 function resolveHeightClass(size: LogoSize): string {
@@ -43,7 +43,7 @@ export function Logo({
   }
 
   return (
-    <div className={`flex items-center gap-sm ${className}`}>
+    <div className={`flex flex-col items-center gap-xs text-center ${className}`}>
       <LogoImage size={size} className={iconClassName} />
       <span className={`font-headline-md text-headline-md font-bold leading-tight ${textClassName}`}>
         El Plonsazo

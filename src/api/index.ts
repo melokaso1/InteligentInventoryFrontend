@@ -9,10 +9,18 @@ import type {
   Sale,
   StockMovement,
 } from '../types'
-import { ApiError, apiFetch, type PagedResponse } from './client'
-import { getToken } from '../hooks/useAuth'
+import { ApiError, apiFetch, sanitizeApiErrorMessage, type PagedResponse } from './client'
+import { getToken, getCurrentUser } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
+const LEGACY_CHAT_SESSION_KEY = 'elplonsazo-chat-session'
+export const CHAT_SESSION_USER_KEY = 'elplonsazo-chat-session-user'
+
+function chatSessionStorageKey(userId?: string | null): string {
+  const id = userId ?? getCurrentUser()?.id ?? 'guest'
+  return `elplonsazo-chat-session-${id}`
+}
 
 function apiRequestHeaders(): Record<string, string> {
   const headers: Record<string, string> = {}
@@ -28,6 +36,9 @@ interface ApiProduct {
   name: string
   category: string
   price: number
+  saleUnit?: string
+  allowsFractional?: boolean
+  unitContentLabel?: string | null
   stock: number
   maxStock: number
   status: ProductStatus
@@ -84,6 +95,14 @@ interface ApiInvoice {
   tax: number
   total: number
   invoiceNumber: string
+  source?: 'manual' | 'chatbot' | 'sale'
+}
+
+interface CreateManualInvoicePayload {
+  customerName: string
+  customerEmail?: string
+  billingNote?: string
+  lineItems: { productId: string; quantity: number }[]
 }
 
 interface CreateInvoicePayload {
@@ -153,16 +172,35 @@ interface ApiLowStockItem {
   status: LowStockItem['status']
 }
 
+export interface ChatCartLineItem {
+  productCode: string
+  productName: string
+  quantity: number
+  measureUnit?: string
+  unitPrice: number
+  subtotal: number
+}
+
 export interface ChatOperationSummary {
   transactionId: string
   status: string
   productCode: string
   productName: string
   quantity: number
+  measureUnit?: string
   unitPrice: number
   subtotal: number
   tax: number
   total: number
+  lineItems?: ChatCartLineItem[]
+}
+
+export interface ChatProductOffer {
+  productCode: string
+  productName: string
+  unitPrice: number
+  stock: number
+  saleUnit?: string
 }
 
 export interface ChatApiResponse {
@@ -171,6 +209,24 @@ export interface ChatApiResponse {
   invoiceNumber?: string
   chips?: string[]
   operationSummary?: ChatOperationSummary
+  offers?: ChatProductOffer[]
+  offersTotalCount?: number
+}
+
+export interface ChatHistoryMessage {
+  senderType: string
+  messageText: string
+  createdAt: string
+  metadataJson?: string | null
+}
+
+interface ChatHistoryBotMetadata {
+  state?: string
+  invoiceNumber?: string
+  chips?: string[]
+  operationSummary?: ChatOperationSummary
+  offers?: ChatProductOffer[]
+  offersTotalCount?: number
 }
 
 function mapProduct(p: ApiProduct): Product {
@@ -180,6 +236,8 @@ function mapProduct(p: ApiProduct): Product {
     name: p.name,
     category: p.category,
     price: p.price,
+    saleUnit: p.saleUnit,
+    allowsFractional: p.allowsFractional,
     stock: p.stock,
     maxStock: p.maxStock,
     status: p.status,
@@ -208,6 +266,8 @@ function mapSale(s: ApiSale): Sale {
     subtotal: s.subtotal,
     tax: s.tax,
     grandTotal: s.grandTotal,
+    orderNumber: s.orderNumber,
+    invoiceNumber: s.invoiceNumber,
   }
 }
 
@@ -225,6 +285,7 @@ function mapInvoice(i: ApiInvoice): Invoice {
     subtotal: i.subtotal,
     tax: i.tax,
     total: i.total,
+    source: i.source,
   }
 }
 
@@ -310,6 +371,14 @@ export async function deleteProduct(id: string): Promise<void> {
 export async function duplicateProduct(id: string): Promise<Product> {
   const data = await apiFetch<ApiProduct>(`/api/products/${id}/duplicate`, {
     method: 'POST',
+  })
+  return mapProduct(data)
+}
+
+export async function patchProductStatus(id: string, status: ProductStatus): Promise<Product> {
+  const data = await apiFetch<ApiProduct>(`/api/products/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
   })
   return mapProduct(data)
 }
@@ -461,14 +530,14 @@ export async function fetchInvoicePdf(invoiceId: string): Promise<{ blob: Blob; 
   })
 
   if (!response.ok) {
-    const message = (await response.text()) || response.statusText
+    const message = sanitizeApiErrorMessage((await response.text()) || response.statusText)
     throw new ApiError(message, response.status)
   }
 
   const blob = await response.blob()
   const disposition = response.headers.get('Content-Disposition') ?? ''
   const match = /filename\*?=(?:UTF-8''|")?([^";\n]+)/i.exec(disposition)
-  const filename = match?.[1]?.replace(/"/g, '') ?? 'factura.pdf'
+  const filename = match?.[1]?.replace(/"/g, '').replace(/\.pdf$/i, '.txt') ?? 'factura.txt'
 
   return { blob, filename }
 }
@@ -481,8 +550,52 @@ export async function createInvoice(payload: CreateInvoicePayload): Promise<Invo
   return mapInvoice(data)
 }
 
-export async function fetchChatHealth(): Promise<{ status: string; chatbot: string }> {
-  return apiFetch<{ status: string; chatbot: string }>('/api/chat/health')
+export async function createManualInvoice(payload: CreateManualInvoicePayload): Promise<Invoice> {
+  const data = await apiFetch<ApiInvoice>('/api/invoices/manual', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return mapInvoice(data)
+}
+
+export async function fetchMyInvoices(params?: {
+  page?: number
+  pageSize?: number
+  status?: string
+}): Promise<PagedResponse<Invoice>> {
+  const search = new URLSearchParams()
+  if (params?.page) search.set('page', String(params.page))
+  if (params?.pageSize) search.set('pageSize', String(params.pageSize))
+  if (params?.status) search.set('status', params.status)
+  const query = search.toString()
+  const data = await apiFetch<PagedResponse<ApiInvoice>>(`/api/my/invoices${query ? `?${query}` : ''}`)
+  return { ...data, items: data.items.map(mapInvoice) }
+}
+
+export async function payInvoice(invoiceId: string, paymentMethod: string): Promise<Invoice> {
+  const data = await apiFetch<ApiInvoice>(`/api/invoices/${invoiceId}/pay`, {
+    method: 'POST',
+    body: JSON.stringify({ paymentMethod }),
+  })
+  return mapInvoice(data)
+}
+
+export async function payMyInvoice(invoiceId: string, paymentMethod: string): Promise<Invoice> {
+  const data = await apiFetch<ApiInvoice>(`/api/my/invoices/${invoiceId}/pay`, {
+    method: 'POST',
+    body: JSON.stringify({ paymentMethod }),
+  })
+  return mapInvoice(data)
+}
+
+export async function fetchChatHealth(): Promise<{
+  status: string
+  chatbot: string
+}> {
+  return apiFetch<{
+    status: string
+    chatbot: string
+  }>('/api/chat/health')
 }
 
 export async function sendChatMessage(sessionId: string, message: string): Promise<ChatApiResponse> {
@@ -492,12 +605,90 @@ export async function sendChatMessage(sessionId: string, message: string): Promi
   })
 }
 
+export async function fetchChatHistory(sessionId: string): Promise<ChatHistoryMessage[]> {
+  const encoded = encodeURIComponent(sessionId)
+  return apiFetch<ChatHistoryMessage[]>(`/api/chat/sessions/${encoded}/history`)
+}
+
+export function clearChatSession(): void {
+  const userId = getCurrentUser()?.id
+  sessionStorage.removeItem(LEGACY_CHAT_SESSION_KEY)
+  if (userId) {
+    sessionStorage.removeItem(chatSessionStorageKey(userId))
+  }
+  sessionStorage.removeItem(chatSessionStorageKey('guest'))
+  sessionStorage.removeItem(CHAT_SESSION_USER_KEY)
+}
+
 export function getChatSessionId(): string {
-  const key = 'elplonsazo-chat-session'
+  const userId = getCurrentUser()?.id ?? 'guest'
+  const key = chatSessionStorageKey(userId)
   let id = sessionStorage.getItem(key)
   if (!id) {
     id = `session-${crypto.randomUUID()}`
     sessionStorage.setItem(key, id)
+    sessionStorage.setItem(CHAT_SESSION_USER_KEY, userId)
   }
   return id
+}
+
+export function createNewChatSession(): string {
+  const userId = getCurrentUser()?.id ?? 'guest'
+  const key = chatSessionStorageKey(userId)
+  const id = `session-${crypto.randomUUID()}`
+  sessionStorage.setItem(key, id)
+  sessionStorage.setItem(CHAT_SESSION_USER_KEY, userId)
+  return id
+}
+
+export function mapChatHistoryToMessages(history: ChatHistoryMessage[]): import('../types').ChatMessage[] {
+  return history.map((item, index) => {
+    let metadata: ChatHistoryBotMetadata | null = null
+    if (item.metadataJson) {
+      try {
+        metadata = JSON.parse(item.metadataJson) as ChatHistoryBotMetadata
+      } catch {
+        metadata = null
+      }
+    }
+
+    const createdAt = new Date(item.createdAt)
+    const time = Number.isNaN(createdAt.getTime())
+      ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+    return {
+      id: `hist-${index}-${item.createdAt}`,
+      role: item.senderType === 'user' ? 'user' : 'assistant',
+      content: item.messageText,
+      time,
+      chips: metadata?.chips,
+      offers: metadata?.offers,
+      offersTotalCount: metadata?.offersTotalCount,
+    }
+  })
+}
+
+export function getLatestChatStateFromHistory(history: ChatHistoryMessage[]): {
+  chatState: string
+  operationSummary: ChatOperationSummary | null
+  invoiceNumber?: string
+} {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const item = history[i]
+    if (item.senderType !== 'bot' || !item.metadataJson) continue
+
+    try {
+      const metadata = JSON.parse(item.metadataJson) as ChatHistoryBotMetadata
+      return {
+        chatState: metadata.state ?? 'idle',
+        operationSummary: metadata.operationSummary ?? null,
+        invoiceNumber: metadata.invoiceNumber,
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return { chatState: 'idle', operationSummary: null }
 }

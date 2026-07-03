@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { Product } from '../types'
 import { ApiError } from '../api/client'
 import {
@@ -8,8 +9,10 @@ import {
   fetchProductCategories,
   fetchProducts,
   fetchProductStats,
+  patchProductStatus,
   updateProduct,
 } from '../api'
+import { isAdmin, isLoggedIn } from '../hooks/useAuth'
 import { Drawer } from '../components/ui/Drawer'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
@@ -22,12 +25,12 @@ import {
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
-import { formatCOP } from '../utils/format'
+import { formatCOP, saleUnitLabel } from '../utils/format'
 
 const emptyProductForm = {
   code: '',
   name: '',
-  category: 'Hardware',
+  category: '',
   price: '0',
   stock: '0',
   maxStock: '100',
@@ -49,6 +52,7 @@ function productToForm(product: Product) {
 const PAGE_SIZE = 15
 
 export function ProductsPage() {
+  const navigate = useNavigate()
   const [products, setProducts] = useState<Product[]>([])
   const [stats, setStats] = useState({
     totalProducts: 0,
@@ -76,8 +80,17 @@ export function ProductsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
+  const [togglingStatusId, setTogglingStatusId] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
   const isInitialLoad = useRef(true)
   const productsRequestId = useRef(0)
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message)
+    window.setTimeout(() => setToastMessage(null), 4000)
+  }, [])
 
   const loadSummary = useCallback(async () => {
     const statsResult = await fetchProductStats()
@@ -85,8 +98,23 @@ export function ProductsPage() {
   }, [])
 
   useEffect(() => {
-    void loadSummary()
-  }, [loadSummary])
+    if (!isLoggedIn()) {
+      navigate('/login', { replace: true })
+      return
+    }
+    if (!isAdmin()) {
+      navigate('/chatbot', { replace: true })
+      return
+    }
+
+    void loadSummary().catch((err) => {
+      if (err instanceof ApiError && err.status === 401) {
+        navigate('/login', { replace: true })
+        return
+      }
+      setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las estadísticas.')
+    })
+  }, [loadSummary, navigate])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -121,11 +149,17 @@ export function ProductsPage() {
   }, [])
 
   useEffect(() => {
+    if (!isLoggedIn() || !isAdmin()) {
+      setLoading(false)
+      return
+    }
+
     const controller = new AbortController()
     const requestId = ++productsRequestId.current
 
     async function loadProducts() {
       if (!isInitialLoad.current) setRefreshing(true)
+      setLoadError(null)
 
       try {
         const result = await fetchProducts(
@@ -143,7 +177,11 @@ export function ProductsPage() {
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         if (requestId !== productsRequestId.current) return
-        // Keep current rows if a non-abort error occurs.
+        if (err instanceof ApiError && err.status === 401) {
+          navigate('/login', { replace: true })
+          return
+        }
+        setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar los productos.')
       } finally {
         if (requestId !== productsRequestId.current) return
         if (isInitialLoad.current) {
@@ -158,7 +196,7 @@ export function ProductsPage() {
     return () => {
       controller.abort()
     }
-  }, [debouncedSearch, categoryFilter, page])
+  }, [debouncedSearch, categoryFilter, page, retryCount, navigate])
 
   const avgUnitPrice =
     stats.totalProducts > 0 ? Math.round(stats.totalInventoryValue / stats.totalProducts) : 0
@@ -195,7 +233,10 @@ export function ProductsPage() {
   }
 
   const openAddDrawer = () => {
-    setProductForm(emptyProductForm)
+    setProductForm({
+      ...emptyProductForm,
+      category: categories[0] ?? '',
+    })
     setFormError(null)
     setAddDrawerOpen(true)
   }
@@ -208,6 +249,12 @@ export function ProductsPage() {
 
   const handleUpdateProduct = async () => {
     if (!selected || editSubmitting) return
+
+    const price = Number(editForm.price)
+    if (!Number.isFinite(price) || price <= 0) {
+      setEditFormError('El precio debe ser mayor que cero.')
+      return
+    }
 
     setEditFormError(null)
     setEditSubmitting(true)
@@ -227,6 +274,7 @@ export function ProductsPage() {
       await loadProducts()
       setSelected(updated)
       setEditForm(productToForm(updated))
+      showToast('Producto actualizado.')
     } catch (err) {
       setEditFormError(err instanceof ApiError ? err.message : 'No se pudo actualizar el producto.')
     } finally {
@@ -243,14 +291,26 @@ export function ProductsPage() {
       await loadSummary()
       await loadProducts()
       openDrawer(duplicate)
+      showToast('Producto duplicado correctamente.')
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'No se pudo duplicar el producto.')
+      showToast(err instanceof ApiError ? err.message : 'No se pudo duplicar el producto.')
     } finally {
       setDuplicatingId(null)
     }
   }
 
   const handleCreateProduct = async () => {
+    if (!productForm.category.trim()) {
+      setFormError('Selecciona una categoría.')
+      return
+    }
+
+    const price = Number(productForm.price)
+    if (!Number.isFinite(price) || price <= 0) {
+      setFormError('El precio debe ser mayor que cero.')
+      return
+    }
+
     setFormError(null)
     setSubmitting(true)
     try {
@@ -266,10 +326,29 @@ export function ProductsPage() {
       await loadSummary()
       setPage(1)
       setAddDrawerOpen(false)
+      showToast('Producto creado correctamente.')
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'No se pudo crear el producto.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleToggleStatus = async (product: Product) => {
+    if (togglingStatusId) return
+
+    const nextStatus = product.status === 'active' ? 'inactive' : 'active'
+    setTogglingStatusId(product.id)
+    try {
+      const updated = await patchProductStatus(product.id, nextStatus)
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)))
+      if (selected?.id === product.id) setSelected(updated)
+      await loadSummary()
+      showToast(`Producto ${nextStatus === 'active' ? 'activado' : 'desactivado'}.`)
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : 'No se pudo actualizar el estado del producto.')
+    } finally {
+      setTogglingStatusId(null)
     }
   }
 
@@ -283,8 +362,9 @@ export function ProductsPage() {
       await loadSummary()
       await loadProducts()
       setDeleteTarget(null)
+      showToast('Producto eliminado.')
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : 'No se pudo eliminar el producto.')
+      setLoadError(err instanceof ApiError ? err.message : 'No se pudo eliminar el producto.')
     } finally {
       setDeleting(false)
     }
@@ -334,6 +414,31 @@ export function ProductsPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-lg">
+      {toastMessage ? (
+        <p
+          className="rounded-lg border border-primary/30 bg-primary-container/20 px-md py-sm text-body-sm text-on-surface"
+          role="status"
+        >
+          {toastMessage}
+        </p>
+      ) : null}
+
+      {loadError ? (
+        <div
+          role="alert"
+          className="flex flex-col gap-sm rounded-xl border border-error/30 bg-error/10 px-lg py-md sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p className="font-body-sm text-body-sm text-error">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => setRetryCount((count) => count + 1)}
+            className="rounded-lg border border-error/30 px-md py-sm font-label-md text-label-md text-error hover:bg-error/5"
+          >
+            Reintentar
+          </button>
+        </div>
+      ) : null}
+
       <div className="mb-xl flex flex-col justify-between gap-gutter md:flex-row md:items-center">
         <div>
           <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-on-surface-variant">
@@ -491,16 +596,22 @@ export function ProductsPage() {
                     </td>
                     <td className="whitespace-nowrap py-3 px-gutter">
                       <p className="font-bold text-on-surface">{formatCOP(product.price)}</p>
+                      <p className="text-xs text-on-surface-variant">
+                        por {saleUnitLabel(product.saleUnit)}
+                      </p>
                     </td>
                     <td className="py-3 px-gutter" onClick={(e) => e.stopPropagation()}>
-                      <label className="relative inline-flex items-center cursor-pointer">
+                      <label
+                        className={`relative inline-flex items-center ${togglingStatusId === product.id ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}
+                      >
                         <input
                           type="checkbox"
                           className="sr-only peer"
-                          defaultChecked={product.status === 'active'}
-                          readOnly
+                          checked={product.status === 'active'}
+                          disabled={togglingStatusId === product.id}
+                          onChange={() => void handleToggleStatus(product)}
                         />
-                        <div className="w-11 h-6 bg-secondary-fixed-dim rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
+                        <div className="w-11 h-6 bg-secondary-fixed-dim rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary peer-disabled:opacity-60" />
                       </label>
                     </td>
                     <td
@@ -634,9 +745,12 @@ export function ProductsPage() {
               onChange={(e) => setProductForm((f) => ({ ...f, category: e.target.value }))}
               className="w-full mt-1 border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-2 focus:ring-primary/20 outline-none"
             >
-              <option>Hardware</option>
-              <option>Software</option>
-              <option>Servicios</option>
+              <option value="">Seleccionar categoría</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-md">
@@ -646,7 +760,8 @@ export function ProductsPage() {
                 value={productForm.price}
                 onChange={(e) => setProductForm((f) => ({ ...f, price: e.target.value }))}
                 type="number"
-                min={0}
+                min={0.01}
+                step="any"
                 className="w-full mt-1 border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-2 focus:ring-primary/20 outline-none"
               />
             </div>
@@ -745,6 +860,8 @@ export function ProductsPage() {
                   value={editForm.price}
                   onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))}
                   type="number"
+                  min={0.01}
+                  step="any"
                   className="w-full mt-1 border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-2 focus:ring-primary/20 outline-none"
                 />
               </div>

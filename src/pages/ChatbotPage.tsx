@@ -2,12 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import type { ChatMessage } from '../types'
 import {
+  CHAT_SESSION_USER_KEY,
+  createNewChatSession,
   fetchChatHealth,
+  fetchChatHistory,
   getChatSessionId,
+  getLatestChatStateFromHistory,
+  mapChatHistoryToMessages,
   sendChatMessage,
   type ChatOperationSummary,
 } from '../api'
 import { ApiError } from '../api/client'
+import { getCurrentUser } from '../hooks/useAuth'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
@@ -20,17 +26,29 @@ const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
   content:
-    '¡Hola! Soy el asistente de El Plonsazo. Puedo ayudarte a consultar stock, buscar productos y realizar compras. ¿En qué te puedo ayudar?',
+    '¡Hola! Soy **Drogui**, tu asistente de ventas en El Plonsazo.\n\n' +
+    'Escríbeme en **lenguaje natural** para consultar stock, buscar productos o iniciar una compra. ' +
+    'Si quieres ver el catálogo completo, **pídeme ver el catálogo**.\n\n' +
+    '**Ejemplos:**\n' +
+    '• «consultar stock de PLZ-MJ-001»\n' +
+    '• «buscar lsd» o simplemente «lsd»\n' +
+    '• «ver catálogo»\n' +
+    '• «quiero comprar cocaina»\n' +
+    '• «cancelar»\n\n' +
+    'También puedes usar los botones del menú.',
   time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-  chips: ['Consultar stock', 'Buscar producto', 'Ver ofertas'],
+  chips: ['¿Cómo me comunico?', 'Ver catálogo', 'Consultar stock', 'Buscar producto'],
 }
 
 const CHIP_INTENT_MESSAGES: Record<string, string> = {
-  'Consultar stock': 'consultar stock',
-  'Buscar producto': 'buscar producto',
-  'Ver ofertas': 'ver ofertas',
-  'Nueva consulta': 'nueva consulta',
+  'Ver catálogo': 'Ver ofertas',
+  '¿Cómo me comunico?': '¿Cómo me comunico?',
+  'Consultar stock': 'Consultar stock',
+  'Buscar producto': 'Buscar producto',
+  'Ver ofertas': 'Ver ofertas',
+  'Nueva consulta': 'Buscar producto',
   'Cancelar': 'cancelar',
+  'Confirmar compra': 'Confirmar compra',
 }
 
 function getChatErrorMessage(err: unknown): string {
@@ -63,14 +81,15 @@ function getHealthBannerMessage(err: unknown): string {
 
 export function ChatbotPage() {
   const location = useLocation()
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [historyLoaded, setHistoryLoaded] = useState(false)
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [mobileView, setMobileView] = useState<MobileView>('chat')
   const [operationSummary, setOperationSummary] = useState<ChatOperationSummary | null>(null)
   const [chatState, setChatState] = useState('idle')
   const [invoiceNumber, setInvoiceNumber] = useState<string | undefined>()
-  const [sessionId] = useState(() => getChatSessionId())
+  const [sessionId, setSessionId] = useState(() => getChatSessionId())
   const [healthStatus, setHealthStatus] = useState<HealthStatus>('checking')
   const [healthBanner, setHealthBanner] = useState('')
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -81,6 +100,23 @@ export function ChatbotPage() {
   const lastCancelSentAtRef = useRef(0)
 
   const chatAvailable = healthStatus === 'healthy'
+
+  useEffect(() => {
+    const userId = getCurrentUser()?.id ?? 'guest'
+    const storedUserId = sessionStorage.getItem(CHAT_SESSION_USER_KEY)
+    if (storedUserId !== null && storedUserId !== userId) {
+      const newSessionId = createNewChatSession()
+      sentInitialForKey.current = null
+      latestRequestIdRef.current = 0
+      requestSeq.current = 0
+      setSessionId(newSessionId)
+      setMessages([])
+      setOperationSummary(null)
+      setChatState('idle')
+      setInvoiceNumber(undefined)
+      setHistoryLoaded(false)
+    }
+  }, [])
 
   const checkHealth = useCallback(async () => {
     try {
@@ -96,6 +132,57 @@ export function ChatbotPage() {
   useEffect(() => {
     void checkHealth()
   }, [checkHealth])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadHistory = async () => {
+      setHistoryLoaded(false)
+      try {
+        const history = await fetchChatHistory(sessionId)
+        if (cancelled) return
+
+        if (history.length > 0) {
+          setMessages(mapChatHistoryToMessages(history))
+          const restored = getLatestChatStateFromHistory(history)
+          setChatState(restored.chatState)
+          setOperationSummary(restored.operationSummary)
+          setInvoiceNumber(restored.invoiceNumber)
+        } else {
+          setMessages([WELCOME_MESSAGE])
+          setChatState('idle')
+          setOperationSummary(null)
+          setInvoiceNumber(undefined)
+        }
+      } catch {
+        if (!cancelled) {
+          setMessages([WELCOME_MESSAGE])
+          setChatState('idle')
+          setOperationSummary(null)
+          setInvoiceNumber(undefined)
+        }
+      } finally {
+        if (!cancelled) {
+          setHistoryLoaded(true)
+        }
+      }
+    }
+
+    void loadHistory()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
+
+  const startNewConversation = () => {
+    const newSessionId = createNewChatSession()
+    sentInitialForKey.current = null
+    latestRequestIdRef.current = 0
+    requestSeq.current = 0
+    setSessionId(newSessionId)
+    setInput('')
+    setIsTyping(false)
+  }
 
   useEffect(() => {
     if (healthStatus !== 'unhealthy') return
@@ -125,12 +212,14 @@ export function ChatbotPage() {
 
   const sendMessage = async (text: string) => {
     const normalizedText = text.trim()
-    if (!normalizedText || !chatAvailable) return
+    if (!normalizedText || !chatAvailable || !historyLoaded) return
 
     const isCancel = /cancelar|cancel/i.test(normalizedText)
+    const isConfirm =
+      /confirmar\s*compra|confirmo\s*(la\s*)?(compra|pedido)/i.test(normalizedText)
 
-    // Avoid dropping cancel actions even if a request is currently in-flight.
-    if (isTyping && !isCancel) return
+    // Avoid dropping cancel/confirm actions even if a request is currently in-flight.
+    if (isTyping && !isCancel && !isConfirm) return
 
     // Prevent rapid double-clicks from queueing multiple cancels.
     if (isCancel) {
@@ -166,6 +255,8 @@ export function ChatbotPage() {
         content: result.response,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         chips: result.chips,
+        offers: result.offers,
+        offersTotalCount: result.offersTotalCount,
       }
       setMessages((prev) => [...prev, botMsg])
       setChatState(result.state)
@@ -192,20 +283,14 @@ export function ChatbotPage() {
 
   useEffect(() => {
     const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage
-    if (!initialMessage || sentInitialForKey.current === location.key || !chatAvailable) return
+    if (!initialMessage || sentInitialForKey.current === location.key || !chatAvailable || !historyLoaded) return
     sentInitialForKey.current = location.key
     void sendMessage(initialMessage)
-  }, [location.key, location.state, chatAvailable])
+  }, [location.key, location.state, chatAvailable, historyLoaded])
 
   const handleChipClick = (chip: string) => {
     if (!chatAvailable) return
-    if (chip.toLowerCase().includes('confirmar') || chip.toLowerCase().includes('confirm')) {
-      void sendMessage('Sí, confirmo la compra.')
-    } else if (chip.toLowerCase().includes('cancelar') || chip.toLowerCase().includes('cancel')) {
-      void sendMessage('cancelar')
-    } else {
-      void sendMessage(CHIP_INTENT_MESSAGES[chip] ?? chip)
-    }
+    void sendMessage(CHIP_INTENT_MESSAGES[chip] ?? chip)
   }
 
   return (
@@ -248,6 +333,25 @@ export function ChatbotPage() {
           mobileView !== 'chat' ? 'hidden lg:flex' : ''
         }`}
       >
+        {healthStatus === 'healthy' && (
+          <div
+            role="status"
+            className="z-20 flex shrink-0 items-center gap-sm border-b border-primary/20 bg-primary/5 px-lg py-sm font-body-sm text-body-sm text-on-surface-variant"
+          >
+            <Icon name="smart_toy" size={18} className="shrink-0 text-primary" />
+            <span className="flex-1">
+              Drogui está en línea — escribe en lenguaje natural o elige una opción del menú.
+            </span>
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="shrink-0 rounded border border-primary/30 px-sm py-xs font-label-md text-label-md text-primary transition-colors hover:bg-primary/10"
+            >
+              Nueva conversación
+            </button>
+          </div>
+        )}
+
         {healthStatus !== 'healthy' && (
           <div
             role="alert"
@@ -286,6 +390,11 @@ export function ChatbotPage() {
           ref={messagesContainerRef}
           className="custom-scrollbar z-10 flex flex-1 flex-col gap-lg overflow-y-auto p-lg"
         >
+          {!historyLoaded && (
+            <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
+              Cargando conversación…
+            </p>
+          )}
           {messages.map((msg) => (
             <ChatMessageComponent
               key={msg.id}
@@ -301,7 +410,7 @@ export function ChatbotPage() {
           value={input}
           onChange={setInput}
           onSend={() => void sendMessage(input)}
-          disabled={!chatAvailable}
+          disabled={!chatAvailable || !historyLoaded}
         />
       </section>
 
@@ -312,7 +421,7 @@ export function ChatbotPage() {
         summary={operationSummary}
         chatState={chatState}
         invoiceNumber={invoiceNumber}
-        onConfirm={() => void sendMessage('Sí, confirmo la compra.')}
+        onConfirm={() => void sendMessage('Confirmar compra')}
         onModify={() => void sendMessage('Quiero modificar el pedido.')}
         onCancel={() => void sendMessage('cancelar')}
       />

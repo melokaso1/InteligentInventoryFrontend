@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { InventoryItem } from '../types'
 import { ApiError } from '../api/client'
 import {
@@ -9,6 +10,7 @@ import {
   fetchStockMovements,
 } from '../api'
 import { Icon } from '../components/ui/Icon'
+import { Toast } from '../components/ui/Toast'
 import { formatCOP, formatCOPCompact } from '../utils/format'
 import { Modal } from '../components/ui/Modal'
 import {
@@ -21,6 +23,7 @@ import {
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import type { StockMovement } from '../types'
+import { useToast } from '../hooks/useToast'
 
 const stockLevelBadge: Record<string, string> = {
   high: 'bg-primary/10 text-primary border border-primary/20',
@@ -46,7 +49,20 @@ const stockLevelOptions = [
 
 const PAGE_SIZE = 15
 
+const ADJUSTMENT_REASONS = [
+  'Corrección manual',
+  'Recibir mercancía nueva',
+  'Mercancía dañada',
+  'Conteo de inventario',
+] as const
+
+const DEFAULT_ADJUSTMENT_REASON = ADJUSTMENT_REASONS[0]
+
+const RECEIVE_STOCK_REASON = ADJUSTMENT_REASONS[1]
+
 export function InventoryPage() {
+  const { toastMessage, showToast, dismissToast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
   const [stats, setStats] = useState({
@@ -70,31 +86,49 @@ export function InventoryPage() {
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
   const [detailItem, setDetailItem] = useState<InventoryItem | null>(null)
   const [quantityChange, setQuantityChange] = useState(0)
-  const [reason, setReason] = useState('Corrección manual')
+  const [reason, setReason] = useState<(typeof ADJUSTMENT_REASONS)[number]>(DEFAULT_ADJUSTMENT_REASON)
+  const [adjustProductSearch, setAdjustProductSearch] = useState('')
+  const [debouncedAdjustProductSearch, setDebouncedAdjustProductSearch] = useState('')
+  const [adjustProductOptions, setAdjustProductOptions] = useState<InventoryItem[]>([])
+  const [adjustProductDropdownOpen, setAdjustProductDropdownOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const isInitialLoad = useRef(true)
   const inventoryRequestId = useRef(0)
+  const adjustProductPickerRef = useRef<HTMLDivElement>(null)
 
-  const reloadAfterAdjustment = useCallback(async () => {
-    const requestId = ++inventoryRequestId.current
-    const [inventoryResult, statsResult, movements] = await Promise.all([
-      fetchInventory({
+  const loadSummary = useCallback(async () => {
+    try {
+      const [statsResult, movements] = await Promise.all([
+        fetchInventoryStats(),
+        fetchStockMovements(10),
+      ])
+      setStats(statsResult)
+      setStockMovements(movements)
+    } catch {
+      // KPIs and movements stay at current values if the summary request fails.
+    }
+  }, [])
+
+  const reloadInventoryTable = useCallback(async () => {
+    try {
+      const inventoryResult = await fetchInventory({
         q: debouncedSearch || undefined,
         category: categoryFilter || undefined,
         stockLevel: stockLevelFilter || undefined,
         page,
         pageSize: PAGE_SIZE,
-      }),
-      fetchInventoryStats(),
-      fetchStockMovements(10),
-    ])
-    if (requestId !== inventoryRequestId.current) return
-    setInventoryItems(inventoryResult.items)
-    setTotalCount(inventoryResult.totalCount)
-    setStats(statsResult)
-    setStockMovements(movements)
+      })
+      setInventoryItems(inventoryResult.items)
+      setTotalCount(inventoryResult.totalCount)
+    } catch {
+      // Keep current rows if a refresh fails.
+    }
   }, [debouncedSearch, categoryFilter, stockLevelFilter, page])
+
+  const reloadAfterAdjustment = useCallback(async () => {
+    await Promise.all([loadSummary(), reloadInventoryTable()])
+  }, [loadSummary, reloadInventoryTable])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -127,28 +161,31 @@ export function InventoryPage() {
   }, [])
 
   useEffect(() => {
-    let cancelled = false
+    void loadSummary()
+  }, [loadSummary])
 
-    async function loadSummary() {
-      try {
-        const [statsResult, movements] = await Promise.all([
-          fetchInventoryStats(),
-          fetchStockMovements(10),
-        ])
-        if (!cancelled) {
-          setStats(statsResult)
-          setStockMovements(movements)
-        }
-      } catch {
-        // KPIs and movements stay at defaults if the summary request fails.
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 30_000
+
+    const refreshLiveData = () => {
+      void loadSummary()
+      void reloadInventoryTable()
+    }
+
+    const interval = window.setInterval(refreshLiveData, POLL_INTERVAL_MS)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshLiveData()
       }
     }
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
-    void loadSummary()
     return () => {
-      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [])
+  }, [loadSummary, reloadInventoryTable])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -191,6 +228,64 @@ export function InventoryPage() {
     }
   }, [debouncedSearch, categoryFilter, stockLevelFilter, page])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedAdjustProductSearch(adjustProductSearch.trim())
+    }, 300)
+
+    return () => window.clearTimeout(timer)
+  }, [adjustProductSearch])
+
+  useEffect(() => {
+    if (!modalOpen) return
+
+    let cancelled = false
+
+    async function loadAdjustProductOptions() {
+      try {
+        const result = await fetchInventory({
+          q: debouncedAdjustProductSearch || undefined,
+          pageSize: 50,
+        })
+        if (cancelled) return
+
+        const items = [...result.items]
+        if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
+          items.unshift(selectedItem)
+        }
+        setAdjustProductOptions(items)
+      } catch {
+        if (!cancelled && selectedItem) {
+          setAdjustProductOptions([selectedItem])
+        }
+      }
+    }
+
+    void loadAdjustProductOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [modalOpen, debouncedAdjustProductSearch, selectedItem])
+
+  useEffect(() => {
+    if (!adjustProductDropdownOpen) return
+
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        adjustProductPickerRef.current &&
+        !adjustProductPickerRef.current.contains(event.target as Node)
+      ) {
+        setAdjustProductDropdownOpen(false)
+        if (selectedItem) {
+          setAdjustProductSearch(`${selectedItem.name} (${selectedItem.sku})`)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [adjustProductDropdownOpen, selectedItem])
+
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
@@ -225,17 +320,80 @@ export function InventoryPage() {
     setModalOpen(false)
     setSelectedItem(null)
     setQuantityChange(0)
-    setReason('Corrección manual')
+    setReason(DEFAULT_ADJUSTMENT_REASON)
+    setAdjustProductSearch('')
+    setDebouncedAdjustProductSearch('')
+    setAdjustProductOptions([])
+    setAdjustProductDropdownOpen(false)
     setFormError(null)
   }
 
-  const openAdjustModal = (item?: InventoryItem) => {
+  const openAdjustModal = useCallback((
+    item?: InventoryItem,
+    options?: { reason?: (typeof ADJUSTMENT_REASONS)[number]; quantityChange?: number },
+  ) => {
     setSelectedItem(item ?? null)
-    setQuantityChange(0)
-    setReason('Corrección manual')
+    setQuantityChange(options?.quantityChange ?? 0)
+    setReason(options?.reason ?? DEFAULT_ADJUSTMENT_REASON)
+    setAdjustProductSearch(item ? `${item.name} (${item.sku})` : '')
+    setDebouncedAdjustProductSearch('')
+    setAdjustProductOptions(item ? [item] : [])
+    setAdjustProductDropdownOpen(false)
     setFormError(null)
     setModalOpen(true)
+  }, [])
+
+  useEffect(() => {
+    if (loading) return
+
+    const action = searchParams.get('action')
+    const sku = searchParams.get('sku')?.trim()
+    if (action !== 'adjust' || !sku) return
+
+    const qtyParam = searchParams.get('qty')
+    const suggestedQty = qtyParam ? Number(qtyParam) : 0
+
+    let cancelled = false
+
+    async function openAdjustFromDeepLink() {
+      try {
+        const result = await fetchInventory({ q: sku, pageSize: 50 })
+        if (cancelled) return
+
+        const item = result.items.find((row) => row.sku === sku) ?? result.items[0]
+        if (!item) return
+
+        openAdjustModal(item, {
+          reason: RECEIVE_STOCK_REASON,
+          quantityChange: Number.isFinite(suggestedQty) && suggestedQty > 0 ? suggestedQty : 0,
+        })
+      } catch {
+        // Deep link falls back to the inventory table if the product lookup fails.
+      } finally {
+        if (!cancelled) {
+          setSearchParams({}, { replace: true })
+        }
+      }
+    }
+
+    void openAdjustFromDeepLink()
+    return () => {
+      cancelled = true
+    }
+  }, [loading, searchParams, setSearchParams, openAdjustModal])
+
+  const handleSelectAdjustProduct = (item: InventoryItem) => {
+    setSelectedItem(item)
+    setAdjustProductSearch(`${item.name} (${item.sku})`)
+    setAdjustProductDropdownOpen(false)
+    setQuantityChange(0)
+    setFormError(null)
   }
+
+  const adjustProductInputValue =
+    adjustProductDropdownOpen || !selectedItem
+      ? adjustProductSearch
+      : `${selectedItem.name} (${selectedItem.sku})`
 
   const openDetailModal = (item: InventoryItem) => {
     setDetailItem(item)
@@ -267,6 +425,7 @@ export function InventoryPage() {
       })
       await reloadAfterAdjustment()
       closeModal()
+      showToast('Ajuste de stock aplicado correctamente.')
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'No se pudo aplicar el ajuste.')
     } finally {
@@ -285,6 +444,8 @@ export function InventoryPage() {
   return (
     <>
       <div className="min-w-0 space-y-lg">
+        <Toast message={toastMessage} onDismiss={dismissToast} />
+
         <div className="flex flex-col justify-between gap-md md:flex-row md:items-center">
           <div>
             <h2 className="font-display-lg text-display-lg text-on-surface">Resumen de inventario</h2>
@@ -569,36 +730,63 @@ export function InventoryPage() {
         }
       >
         <div className="space-y-md">
-          {!selectedItem ? (
-            <div>
-              <label className="text-xs font-semibold uppercase text-on-surface-variant">Producto</label>
-              <Select
-                className="mt-1 w-full rounded-lg border border-outline-variant pl-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                value=""
+          <div ref={adjustProductPickerRef}>
+            <label className="text-xs font-semibold uppercase text-on-surface-variant">Producto</label>
+            <div className="relative mt-1">
+              <Icon
+                name="search"
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 scale-90 text-outline"
+              />
+              <input
+                type="text"
+                value={adjustProductInputValue}
                 onChange={(e) => {
-                  const item = inventoryItems.find((i) => i.id === e.target.value)
-                  if (item) setSelectedItem(item)
+                  setAdjustProductSearch(e.target.value)
+                  if (selectedItem) setSelectedItem(null)
+                  setAdjustProductDropdownOpen(true)
                 }}
-              >
-                <option value="">Seleccionar producto…</option>
-                {inventoryItems.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.sku})
-                  </option>
-                ))}
-              </Select>
+                onFocus={() => {
+                  setAdjustProductDropdownOpen(true)
+                  if (selectedItem) {
+                    setAdjustProductSearch('')
+                    setSelectedItem(null)
+                  }
+                }}
+                placeholder="Buscar por nombre o SKU..."
+                className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2 pl-10 pr-4 text-on-surface outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              {adjustProductDropdownOpen && (
+                <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-outline-variant bg-surface-container-lowest shadow-lg">
+                  {adjustProductOptions.length === 0 ? (
+                    <li className="px-3 py-2 text-sm text-on-surface-variant">Sin resultados</li>
+                  ) : (
+                    adjustProductOptions.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectAdjustProduct(item)}
+                          className={`w-full px-3 py-2 text-left text-sm transition-colors hover:bg-primary/10 ${
+                            selectedItem?.id === item.id ? 'bg-primary/10 text-primary' : 'text-on-surface'
+                          }`}
+                        >
+                          <span className="font-semibold">{item.name}</span>
+                          <span className="text-on-surface-variant"> ({item.sku})</span>
+                          <span className="ml-2 text-xs text-on-surface-variant">
+                            Stock: {item.quantity}
+                          </span>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
             </div>
-          ) : (
-            <>
-              <p className="font-body-md text-body-md">
-                <span className="font-semibold">{selectedItem.name}</span>
-                <span className="text-on-surface-variant"> ({selectedItem.sku})</span>
-              </p>
-              <p className="font-body-sm text-body-sm text-on-surface-variant">
+            {selectedItem && (
+              <p className="mt-2 font-body-sm text-body-sm text-on-surface-variant">
                 Cantidad actual: <span className="font-bold text-on-surface">{selectedItem.quantity}</span>
               </p>
-            </>
-          )}
+            )}
+          </div>
           <div>
             <label className="text-xs font-semibold uppercase text-on-surface-variant">
               Cantidad del ajuste
@@ -618,11 +806,13 @@ export function InventoryPage() {
             <Select
               className="mt-1 w-full rounded-lg border border-outline-variant pl-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) => setReason(e.target.value as (typeof ADJUSTMENT_REASONS)[number])}
             >
-              <option value="Corrección manual">Corrección manual</option>
-              <option value="Mercancía dañada">Mercancía dañada</option>
-              <option value="Conteo de inventario">Conteo de inventario</option>
+              {ADJUSTMENT_REASONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </Select>
           </div>
           {formError && <p className="text-sm text-error">{formError}</p>}

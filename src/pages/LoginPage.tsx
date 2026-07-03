@@ -32,7 +32,7 @@ function InputField({
 
   return (
     <div className="space-y-xs">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-y-xs sm:flex-row sm:items-center sm:justify-between">
         <label htmlFor={id} className="font-label-md text-label-md uppercase text-on-surface-variant">
           {label}
         </label>
@@ -104,21 +104,21 @@ export function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center bg-background p-md">
-      <ThemeToggle variant="floating" />
-
+    <div className="relative flex min-h-screen w-full items-center justify-center bg-background px-sm py-md sm:p-md">
       <main className="relative z-10 w-full max-w-[440px]">
-        <div className="auth-card space-y-lg rounded-lg p-xl">
+        <div className="auth-card relative space-y-lg rounded-lg p-lg sm:p-xl">
+          <ThemeToggle variant="floating" className="top-md right-md sm:top-lg sm:right-lg" />
           <header className="flex flex-col items-center space-y-sm">
-            <div className="flex items-center justify-center rounded bg-primary-container p-sm">
-              <Logo size="lg" />
+            <div className="flex items-center justify-center rounded-lg bg-primary-container px-md py-md">
+              <Logo
+                size="lg"
+                showText
+                textClassName="font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+              />
             </div>
-            <div className="text-center">
-              <h1 className="font-headline-md text-headline-md text-on-surface">El Plonsazo</h1>
-              <p className="font-body-sm text-body-sm text-on-surface-variant">
-                Acceso a la Suite Empresarial
-              </p>
-            </div>
+            <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
+              Acceso a la Suite Empresarial
+            </p>
           </header>
 
           <form onSubmit={handleSubmit} className="space-y-md">
@@ -150,7 +150,7 @@ export function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setForgotOpen(true)}
-                  className="font-label-md text-label-md text-primary transition-all hover:underline"
+                  className="text-left font-body-sm text-body-sm text-primary transition-all hover:underline sm:font-label-md sm:text-label-md"
                 >
                   ¿Olvidaste tu contraseña?
                 </button>
@@ -183,15 +183,15 @@ export function LoginPage() {
           </p>
 
           <footer className="flex flex-col items-center space-y-md border-t border-outline-variant pt-lg">
-            <div className="flex items-center space-x-md">
-              <div className="flex items-center space-x-xs">
+            <div className="flex flex-col items-center gap-sm text-center sm:flex-row sm:gap-md">
+              <div className="flex items-center gap-xs">
                 <Icon name="verified_user" size={16} className="text-primary" />
                 <span className="font-body-sm text-body-sm text-on-surface-variant/80">
                   Conexión Segura (TLS)
                 </span>
               </div>
-              <div className="h-3 w-px bg-outline-variant" />
-              <div className="flex items-center space-x-xs">
+              <div className="hidden h-3 w-px bg-outline-variant sm:block" />
+              <div className="flex items-center gap-xs">
                 <Icon name="shield" size={16} className="text-primary" />
                 <span className="font-body-sm text-body-sm text-on-surface-variant/80">
                   Cumplimiento SOC2
@@ -201,7 +201,7 @@ export function LoginPage() {
           </footer>
         </div>
 
-        <nav className="mt-xl flex justify-center space-x-xl font-label-md text-label-md text-on-surface-variant/60">
+        <nav className="mt-lg flex flex-col items-center gap-sm px-sm text-center font-label-md text-label-md text-on-surface-variant/60 sm:mt-xl sm:flex-row sm:flex-wrap sm:justify-center sm:gap-x-lg sm:gap-y-sm">
           {FOOTER_LINKS.map((label) => (
             <button
               key={label}

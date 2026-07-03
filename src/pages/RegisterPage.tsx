@@ -3,8 +3,10 @@ import { Link, Navigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
+import { PasswordChecklist } from '../components/ui/PasswordChecklist'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
 import { isLoggedIn, useAuth } from '../hooks/useAuth'
+import { validatePassword } from '../utils/password'
 
 function InputField({
   id,
@@ -75,6 +77,12 @@ export function RegisterPage() {
       return
     }
 
+    const validationError = validatePassword(password)
+    if (validationError) {
+      setError(`La contraseña no cumple los requisitos: ${validationError}.`)
+      return
+    }
+
     setLoading(true)
     try {
       await register({ name, email, password })
@@ -96,21 +104,21 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center bg-background p-md">
-      <ThemeToggle variant="floating" />
-
+    <div className="relative flex min-h-screen w-full items-center justify-center bg-background px-sm py-md sm:p-md">
       <main className="relative z-10 w-full max-w-[440px]">
-        <div className="auth-card space-y-lg rounded-lg p-xl">
+        <div className="auth-card relative space-y-lg rounded-lg p-lg sm:p-xl">
+          <ThemeToggle variant="floating" className="top-md right-md sm:top-lg sm:right-lg" />
           <header className="flex flex-col items-center space-y-sm">
-            <div className="flex items-center justify-center rounded bg-primary-container p-sm">
-              <Logo size="lg" />
+            <div className="flex items-center justify-center rounded-lg bg-primary-container px-md py-md">
+              <Logo
+                size="lg"
+                showText
+                textClassName="font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+              />
             </div>
-            <div className="text-center">
-              <h1 className="font-headline-md text-headline-md text-on-surface">El Plonsazo</h1>
-              <p className="font-body-sm text-body-sm text-on-surface-variant">
-                Crear cuenta en la Suite Empresarial
-              </p>
-            </div>
+            <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
+              Crear cuenta en la Suite Empresarial
+            </p>
           </header>
 
           <form onSubmit={handleSubmit} className="space-y-md">
@@ -143,6 +151,14 @@ export function RegisterPage() {
               placeholder="••••••••"
               icon="lock"
             />
+
+            {password.length > 0 ? (
+              <PasswordChecklist password={password} className="rounded-lg border border-outline-variant/50 bg-surface-container-low/50 p-sm" />
+            ) : (
+              <p className="font-body-sm text-body-sm text-on-surface-variant">
+                Mínimo 8 caracteres con mayúscula, minúscula, número y símbolo.
+              </p>
+            )}
 
             <InputField
               id="confirmPassword"

@@ -33,3 +33,10 @@ export async function register(data: {
 export async function fetchCurrentUser(): Promise<AuthUser> {
   return apiFetch<AuthUser>('/api/auth/me')
 }
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiFetch<void>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+}

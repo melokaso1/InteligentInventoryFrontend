@@ -35,7 +35,23 @@ export function OperationSummary({
   onCancel,
 }: OperationSummaryProps) {
   const status = summary ? statusDisplay(summary.status, chatState) : statusDisplay('', chatState)
-  const hasSummary = Boolean(summary && summary.productName)
+  const lineItems =
+    summary?.lineItems && summary.lineItems.length > 0
+      ? summary.lineItems
+      : summary?.productName
+        ? [
+            {
+              productCode: summary.productCode,
+              productName: summary.productName,
+              quantity: summary.quantity,
+              measureUnit: summary.measureUnit,
+              unitPrice: summary.unitPrice,
+              subtotal: summary.subtotal,
+            },
+          ]
+        : []
+  const hasSummary = lineItems.length > 0
+  const isMultiItem = lineItems.length > 1
 
   return (
     <aside
@@ -77,44 +93,57 @@ export function OperationSummary({
             </div>
 
             <div className="flex flex-col gap-md">
-              <div className="flex flex-col gap-md rounded border border-outline-variant bg-surface-container-low p-md shadow-sm">
-                <div className="flex gap-md">
-                  <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container">
-                    <Icon name="inventory_2" size={32} className="text-on-surface-variant" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-headline-sm text-headline-sm leading-tight text-on-surface">
-                      {summary!.productName}
-                    </h3>
-                    <p className="font-mono-sm text-[12px] uppercase text-outline">
-                      SKU: {summary!.productCode}
-                    </p>
-                    <div className="mt-sm flex items-center gap-xs">
-                      <Icon name="check_circle" filled size={14} className="text-primary" />
-                      <span className="font-label-md text-label-md text-primary">Stock validado</span>
+              {lineItems.map((item) => (
+                <div
+                  key={item.productCode}
+                  className="flex flex-col gap-md rounded border border-outline-variant bg-surface-container-low p-md shadow-sm"
+                >
+                  <div className="flex gap-md">
+                    <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container">
+                      <Icon name="inventory_2" size={32} className="text-on-surface-variant" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-headline-sm text-headline-sm leading-tight text-on-surface">
+                        {item.productName}
+                      </h3>
+                      <p className="font-mono-sm text-[12px] uppercase text-outline">
+                        SKU: {item.productCode}
+                      </p>
+                      <div className="mt-sm flex items-center gap-xs">
+                        <Icon name="check_circle" filled size={14} className="text-primary" />
+                        <span className="font-label-md text-label-md text-primary">Stock validado</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-sm border-t border-outline-variant pt-md">
-                  <div className="flex flex-col">
-                    <span className="text-[11px] font-bold uppercase text-outline">Cantidad</span>
-                    <span className="font-headline-sm text-headline-sm text-on-surface">
-                      {summary!.quantity}{' '}
-                      <span className="text-body-sm font-normal text-on-surface-variant">unidades</span>
-                    </span>
+                  <div className="grid grid-cols-2 gap-sm border-t border-outline-variant pt-md">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-bold uppercase text-outline">Cantidad</span>
+                      <span className="font-headline-sm text-headline-sm text-on-surface">
+                        {item.quantity}{' '}
+                        <span className="text-body-sm font-normal text-on-surface-variant">
+                          {item.measureUnit ?? 'unidades'}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="text-[11px] font-bold uppercase text-outline">Precio unitario</span>
+                      <span className="font-headline-sm text-headline-sm text-on-surface">
+                        {formatCOP(item.unitPrice)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex flex-col text-right">
-                    <span className="text-[11px] font-bold uppercase text-outline">Precio unitario</span>
-                    <span className="font-headline-sm text-headline-sm text-on-surface">
-                      {formatCOP(summary!.unitPrice)}
-                    </span>
-                  </div>
+                  {isMultiItem && (
+                    <div className="flex justify-between border-t border-outline-variant pt-sm text-body-sm text-on-surface-variant">
+                      <span>Subtotal línea</span>
+                      <span className="text-on-surface">{formatCOP(item.subtotal)}</span>
+                    </div>
+                  )}
                 </div>
-              </div>
+              ))}
 
               <div className="flex flex-col gap-sm rounded border border-outline-variant bg-surface-container-highest p-md">
                 <div className="flex justify-between text-body-md text-on-surface-variant">
-                  <span>Subtotal</span>
+                  <span>{isMultiItem ? 'Subtotal carrito' : 'Subtotal'}</span>
                   <span className="text-on-surface">{formatCOP(summary!.subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-body-md text-on-surface-variant">

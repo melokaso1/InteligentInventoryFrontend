@@ -10,7 +10,11 @@ export function Sidebar() {
   const { logout } = useAuth()
   const { open, setOpen } = useSidebar()
   const admin = isAdmin()
-  const visibleNavItems = navItems.filter((item) => !item.adminOnly || admin)
+  const visibleNavItems = navItems.filter((item) => {
+    if (item.adminOnly) return admin
+    if (item.clienteOnly) return !admin
+    return true
+  })
 
   return (
     <>
@@ -28,26 +32,24 @@ export function Sidebar() {
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="px-lg py-xl">
-          <div className="flex items-start justify-between">
-            <div>
-              <Logo
-                size="md"
-                showText
-                textClassName="font-headline-md text-headline-md text-primary-fixed dark:text-primary"
-              />
-              <p className="mt-xs font-body-sm text-body-sm text-secondary-fixed-dim dark:text-on-surface-variant opacity-70">
-                Suite empresarial
-              </p>
-            </div>
-            <button
-              type="button"
-              aria-label="Cerrar barra lateral"
-              className="rounded-full p-1 text-inverse-on-surface/70 hover:bg-inverse-on-surface/10 dark:text-on-surface-variant lg:hidden"
-              onClick={() => setOpen(false)}
-            >
-              <Icon name="close" size={20} />
-            </button>
+        <div className="relative px-lg pb-lg pt-xl">
+          <button
+            type="button"
+            aria-label="Cerrar barra lateral"
+            className="absolute right-md top-md rounded-full p-1 text-inverse-on-surface/70 hover:bg-inverse-on-surface/10 dark:text-on-surface-variant lg:hidden"
+            onClick={() => setOpen(false)}
+          >
+            <Icon name="close" size={20} />
+          </button>
+          <div className="flex flex-col items-center text-center">
+            <Logo
+              size="md"
+              showText
+              textClassName="font-headline-md text-headline-md font-extrabold text-primary-fixed dark:text-primary"
+            />
+            <p className="mt-sm font-body-sm text-body-sm text-secondary-fixed-dim opacity-70 dark:text-on-surface-variant">
+              Suite empresarial
+            </p>
           </div>
         </div>
 

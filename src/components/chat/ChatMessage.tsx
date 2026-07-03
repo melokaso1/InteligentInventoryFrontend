@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { ChatMessage as ChatMessageType } from '../../types'
 import { Icon } from '../ui/Icon'
+import { ProductOfferList } from './ProductOfferList'
 
 function escapeHtml(text: string): string {
   return text
@@ -12,6 +13,28 @@ function escapeHtml(text: string): string {
 }
 
 function formatAssistantContent(content: string): ReactNode[] {
+  const paragraphs = content.split(/\n{2,}/)
+  const nodes: ReactNode[] = []
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraphIndex > 0) {
+      nodes.push(<br key={`br-${paragraphIndex}`} />)
+      nodes.push(<br key={`br2-${paragraphIndex}`} />)
+    }
+
+    const lines = paragraph.split('\n')
+    lines.forEach((line, lineIndex) => {
+      if (lineIndex > 0) {
+        nodes.push(<br key={`line-${paragraphIndex}-${lineIndex}`} />)
+      }
+      nodes.push(...formatInlineMarkdown(line, `${paragraphIndex}-${lineIndex}`))
+    })
+  })
+
+  return nodes.length > 0 ? nodes : [escapeHtml(content)]
+}
+
+function formatInlineMarkdown(content: string, keyPrefix: string): ReactNode[] {
   const parts: ReactNode[] = []
   const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g
   let lastIndex = 0
@@ -23,9 +46,9 @@ function formatAssistantContent(content: string): ReactNode[] {
       parts.push(escapeHtml(content.slice(lastIndex, match.index)))
     }
     if (match[1] !== undefined) {
-      parts.push(<strong key={key++}>{escapeHtml(match[1])}</strong>)
+      parts.push(<strong key={`${keyPrefix}-${key++}`}>{escapeHtml(match[1])}</strong>)
     } else if (match[2] !== undefined) {
-      parts.push(<em key={key++}>{escapeHtml(match[2])}</em>)
+      parts.push(<em key={`${keyPrefix}-${key++}`}>{escapeHtml(match[2])}</em>)
     }
     lastIndex = regex.lastIndex
   }
@@ -79,7 +102,19 @@ export function ChatMessage({ message, onChipClick, chipsDisabled = false }: Cha
       <div className="flex max-w-full flex-col gap-sm">
         <div className="flex flex-col gap-xs">
           <div className="rounded-xl rounded-bl-[2px] border border-outline-variant bg-surface-container-low p-md text-on-surface shadow-sm">
-            <p className="text-body-md">{formatAssistantContent(message.content)}</p>
+            <div className="text-body-md">{formatAssistantContent(message.content)}</div>
+            {message.offers && message.offers.length > 0 && (
+              <ProductOfferList
+                offers={message.offers}
+                totalCount={message.offersTotalCount}
+                onLoadMore={
+                  message.offersTotalCount &&
+                  message.offers.length < message.offersTotalCount
+                    ? () => onChipClick?.('Ver más productos')
+                    : undefined
+                }
+              />
+            )}
           </div>
           <span className="px-sm font-mono-sm text-[10px] uppercase text-outline">{message.time}</span>
         </div>

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { SidebarProvider } from '../../hooks/useSidebar'
 import { Header } from './Header'
@@ -14,11 +15,16 @@ const searchPlaceholders: Record<string, string> = {
   '/support': 'Buscar en ayuda...',
 }
 
-function AppLayoutContent() {
+interface AppLayoutContentProps {
+  children?: ReactNode
+}
+
+function AppLayoutContent({ children }: AppLayoutContentProps) {
   const location = useLocation()
   const placeholder = searchPlaceholders[location.pathname] ?? 'Buscar datos...'
   const isInvoices = location.pathname === '/invoices'
   const isChatbot = location.pathname === '/chatbot'
+  const pageContent = children ?? <Outlet />
 
   return (
     <div className="min-h-screen min-w-0 max-w-full overflow-x-hidden bg-background font-body-md text-on-surface antialiased">
@@ -34,14 +40,22 @@ function AppLayoutContent() {
         }`}
       >
         {isInvoices || isChatbot ? (
-          <Outlet />
+          pageContent
         ) : (
           <div className="mx-auto min-w-0 w-full max-w-7xl">
-            <Outlet />
+            {pageContent}
           </div>
         )}
       </main>
     </div>
+  )
+}
+
+export function AppLayoutFrame({ children }: { children: ReactNode }) {
+  return (
+    <SidebarProvider>
+      <AppLayoutContent>{children}</AppLayoutContent>
+    </SidebarProvider>
   )
 }
 

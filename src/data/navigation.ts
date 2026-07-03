@@ -7,5 +7,6 @@ export const navItems: NavItem[] = [
   { to: '/sales', label: 'Ventas', icon: 'payments', adminOnly: true },
   { to: '/invoices', label: 'Facturas', icon: 'receipt_long', adminOnly: true },
   { to: '/reports', label: 'Informes', icon: 'description', adminOnly: true },
+  { to: '/my-invoices', label: 'Mis facturas', icon: 'receipt_long', clienteOnly: true },
   { to: '/chatbot', label: 'Chatbot', icon: 'smart_toy' },
 ]

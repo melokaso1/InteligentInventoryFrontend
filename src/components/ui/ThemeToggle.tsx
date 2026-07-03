@@ -11,7 +11,7 @@ export function ThemeToggle({ variant = 'inline', className = '' }: ThemeToggleP
 
   const variantClasses =
     variant === 'floating'
-      ? 'absolute top-4 right-4 z-10 rounded-full bg-surface-container-high p-2 transition-all hover:bg-surface-container-highest active:scale-95'
+      ? 'absolute top-md right-md z-20 rounded-full bg-surface-container-high p-2 transition-all hover:bg-surface-container-highest active:scale-95'
       : 'rounded-full p-2 text-on-surface-variant transition-all hover:bg-surface-container-high hover:text-primary active:scale-95'
 
   return (

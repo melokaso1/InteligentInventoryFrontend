@@ -1,3 +1,5 @@
+export type StockLevel = 'high' | 'medium' | 'low' | 'critical'
+
 export type ProductStatus = 'active' | 'inactive' | 'out_of_stock' | 'archived'
 
 export interface Product {
@@ -11,9 +13,9 @@ export interface Product {
   status: ProductStatus
   icon: string
   description: string
+  saleUnit?: string
+  allowsFractional?: boolean
 }
-
-export type StockLevel = 'high' | 'medium' | 'low' | 'critical'
 
 export interface InventoryItem {
   id: string
@@ -61,9 +63,12 @@ export interface Sale {
   subtotal: number
   tax: number
   grandTotal: number
+  orderNumber?: string
+  invoiceNumber?: string
 }
 
 export type InvoiceStatus = 'paid' | 'pending' | 'overdue' | 'draft'
+export type InvoiceSource = 'manual' | 'chatbot' | 'sale'
 
 export interface InvoiceLineItem {
   description: string
@@ -84,6 +89,7 @@ export interface Invoice {
   subtotal: number
   tax: number
   total: number
+  source?: InvoiceSource
 }
 
 export interface ActivityItem {
@@ -115,12 +121,22 @@ export interface DashboardKpi {
   iconColor: string
 }
 
+export interface ChatProductOffer {
+  productCode: string
+  productName: string
+  unitPrice: number
+  stock: number
+  saleUnit?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   time: string
   chips?: string[]
+  offers?: ChatProductOffer[]
+  offersTotalCount?: number
 }
 
 export interface NavItem {
@@ -128,6 +144,7 @@ export interface NavItem {
   label: string
   icon: string
   adminOnly?: boolean
+  clienteOnly?: boolean
 }
 
 export interface ReportItem {

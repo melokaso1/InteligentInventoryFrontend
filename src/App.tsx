@@ -3,6 +3,7 @@ import './App.css'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { AppLayout } from './components/layout/AppLayout'
 import { ChatbotPage } from './pages/ChatbotPage'
+import { ClientInvoicesPage } from './pages/ClientInvoicesPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { InventoryPage } from './pages/InventoryPage'
 import { InvoicesPage } from './pages/InvoicesPage'
@@ -12,7 +13,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SalesPage } from './pages/SalesPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { SupportPage } from './pages/SupportPage'
+import { SupportRoute } from './components/routing/SupportRoute'
 
 function App() {
   return (
@@ -20,10 +21,11 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/support" element={<SupportRoute />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="chatbot" element={<ChatbotPage />} />
-            <Route path="support" element={<SupportPage />} />
+            <Route path="my-invoices" element={<ClientInvoicesPage />} />
             <Route element={<ProtectedRoute adminOnly />}>
               <Route index element={<DashboardPage />} />
               <Route path="products" element={<ProductsPage />} />

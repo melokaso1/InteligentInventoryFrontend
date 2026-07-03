@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { login as apiLogin, register as apiRegister, type AuthUser } from '../api/auth'
+import { clearChatSession } from '../api'
 
 const AUTH_KEY = 'erp-auth'
 const TOKEN_KEY = 'erp-token'
@@ -58,6 +59,7 @@ export function useAuth() {
   )
 
   const logout = useCallback(() => {
+    clearChatSession()
     clearAuth()
     setIsAuthenticated(false)
     navigate('/login')
@@ -78,6 +80,8 @@ export function getRole(): ErpRole {
 export function isAdmin(): boolean {
   return getRole() === 'admin'
 }
+
+export { clearChatSession } from '../api'
 
 export function getCurrentUser(): AuthUser | null {
   try {
