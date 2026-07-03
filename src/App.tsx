@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './App.css'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { AppLayout } from './components/layout/AppLayout'
+import { HomeOrChatbotRedirect } from './components/routing/HomeOrChatbotRedirect'
 import { SupportRoute } from './components/routing/SupportRoute'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
@@ -13,7 +14,6 @@ const ClientInvoicesPage = lazy(() =>
 )
 const DispatchPage = lazy(() => import('./pages/DispatchPage').then((m) => ({ default: m.DispatchPage })))
 const MyOrdersPage = lazy(() => import('./pages/MyOrdersPage').then((m) => ({ default: m.MyOrdersPage })))
-const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })))
 const InventoryPage = lazy(() => import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage })))
 const InvoicesPage = lazy(() => import('./pages/InvoicesPage').then((m) => ({ default: m.InvoicesPage })))
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ default: m.ProductsPage })))
@@ -37,12 +37,12 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/support" element={<SupportRoute />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<AppLayout />}>
-              <Route path="chatbot" element={<ChatbotPage />} />
+          <Route element={<AppLayout />}>
+            <Route path="chatbot" element={<ChatbotPage />} />
+            <Route index element={<HomeOrChatbotRedirect />} />
+            <Route element={<ProtectedRoute />}>
               <Route path="my-invoices" element={<ClientInvoicesPage />} />
               <Route path="my-orders" element={<MyOrdersPage />} />
-              <Route index element={<HomePage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route element={<ProtectedRoute adminOnly />}>
                 <Route path="products" element={<ProductsPage />} />

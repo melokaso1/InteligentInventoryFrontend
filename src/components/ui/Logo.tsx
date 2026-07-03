@@ -43,9 +43,9 @@ export function Logo({
   }
 
   return (
-    <div className={`flex flex-col items-center gap-xs text-center ${className}`}>
+    <div className={`flex max-h-full flex-col items-center gap-0.5 text-center ${className}`}>
       <LogoImage size={size} className={iconClassName} />
-      <span className={`font-headline-md text-headline-md font-bold leading-tight ${textClassName}`}>
+      <span className={`font-headline-md text-headline-md font-bold leading-none ${textClassName}`}>
         El Plonsazo
       </span>
     </div>

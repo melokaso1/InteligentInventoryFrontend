@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { ApiError, getUserFacingApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
@@ -57,6 +57,9 @@ function InputField({
 
 export function RegisterPage() {
   const { register } = useAuth()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get('returnTo')
+  const resumeCheckout = searchParams.get('resumeCheckout') === '1'
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -90,7 +93,7 @@ export function RegisterPage() {
 
     setLoading(true)
     try {
-      await register({ name, email, password })
+      await register({ name, email, password }, { returnTo, resumeCheckout })
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError(err.message || 'Ya existe una cuenta con ese correo electrónico.')
@@ -106,21 +109,38 @@ export function RegisterPage() {
     <div className="relative flex min-h-screen w-full items-center justify-center bg-background px-sm py-md sm:p-md">
       <main className="relative z-10 w-full max-w-[440px]">
         <div className="auth-card relative space-y-lg rounded-lg p-lg sm:p-xl">
-          <ThemeToggle variant="floating" className="top-md right-md sm:top-lg sm:right-lg" />
-          <header className="flex flex-col items-center space-y-sm">
-            <div className="flex items-center justify-center rounded-lg bg-primary-container px-md py-md">
+          <div className="flex items-center justify-between gap-sm">
+            <Link
+              to="/chatbot"
+              className="flex min-w-0 items-center gap-xs font-label-md text-label-md text-on-surface-variant transition-colors hover:text-primary"
+            >
+              <Icon name="arrow_back" size={18} className="shrink-0" />
+              Volver al inicio
+            </Link>
+            <ThemeToggle variant="inline" className="shrink-0" />
+          </div>
+          <header className="flex flex-col items-center gap-sm text-center">
+            <div className="flex w-full max-w-[11rem] items-center justify-center rounded-lg bg-primary-container p-md sm:max-w-[13rem] sm:p-lg">
               <Logo
                 size="lg"
-                showText
-                textClassName="font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+                iconClassName="h-16 w-full max-w-full object-contain sm:h-20"
               />
             </div>
-            <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
+            <h1 className="font-headline-md text-headline-md font-extrabold text-on-surface">
+              El Plonsazo
+            </h1>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
               Crear cuenta en la Suite Empresarial
             </p>
           </header>
 
           <form onSubmit={handleSubmit} className="space-y-md">
+            {resumeCheckout ? (
+              <p className="rounded-lg border border-primary/30 bg-primary-container/30 px-md py-sm font-body-sm text-body-sm text-on-surface">
+                Crea tu cuenta para confirmar el pedido. Al iniciar sesión, volverás al chat con tu carrito intacto.
+              </p>
+            ) : null}
+
             <InputField
               id="name"
               label="Nombre Completo"
@@ -189,7 +209,17 @@ export function RegisterPage() {
 
           <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
             ¿Ya tienes cuenta?{' '}
-            <Link to="/login" className="font-semibold text-primary transition-colors hover:underline">
+            <Link
+              to={
+                returnTo || resumeCheckout
+                  ? `/login?${new URLSearchParams({
+                      ...(returnTo ? { returnTo } : {}),
+                      ...(resumeCheckout ? { resumeCheckout: '1' } : {}),
+                    }).toString()}`
+                  : '/login'
+              }
+              className="font-semibold text-primary transition-colors hover:underline"
+            >
               Iniciar sesión
             </Link>
           </p>

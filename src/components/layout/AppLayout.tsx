@@ -26,13 +26,13 @@ function AppLayoutContent({ children }: AppLayoutContentProps) {
             ? 'flex min-h-[calc(100vh-4rem)] flex-col overflow-x-hidden overflow-y-auto p-0 lg:h-[calc(100vh-4rem)] lg:overflow-hidden'
             : isChatbot
               ? 'flex h-[calc(100vh-4rem)] flex-col overflow-x-hidden overflow-hidden p-0'
-              : `overflow-x-hidden p-md md:p-xl${chatFabVisible ? ' pb-20 pr-20 sm:pr-24' : ''}`
+              : `overflow-x-hidden p-md md:p-xl${chatFabVisible ? ' pb-20' : ''}`
         }`}
       >
         {isInvoices || isChatbot ? (
           pageContent
         ) : (
-          <div className="mx-auto min-w-0 w-full max-w-7xl">
+          <div className="mx-auto min-w-0 w-full max-w-full lg:max-w-7xl">
             {pageContent}
           </div>
         )}

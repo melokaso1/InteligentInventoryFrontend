@@ -4,18 +4,26 @@ export function getNotificationTargetPath(
   notification: AppNotification,
   admin: boolean,
 ): string | null {
-  if (!notification.saleId) return null
-
   if (admin) {
-    if (notification.type === 'order_delivered') {
-      return `/dispatch?tab=delivered&saleId=${notification.saleId}`
+    if (notification.invoiceId) {
+      return `/invoices?invoiceId=${notification.invoiceId}`
     }
-    return `/invoices?saleId=${notification.saleId}`
+    if (notification.saleId) {
+      if (notification.type === 'order_delivered') {
+        return `/dispatch?tab=delivered&saleId=${notification.saleId}`
+      }
+      return `/dispatch?saleId=${notification.saleId}`
+    }
+    return null
   }
 
-  if (notification.type === 'order_shipped' || notification.type === 'order_delivered') {
+  if (notification.saleId && (
+    notification.type === 'order_preparing'
+    || notification.type === 'order_shipped'
+    || notification.type === 'order_delivered'
+  )) {
     return '/my-orders'
   }
 
-  return '/my-orders'
+  return notification.saleId ? '/my-orders' : null
 }

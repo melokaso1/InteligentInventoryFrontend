@@ -108,7 +108,7 @@ function DispatchCard({
 
 export function PendingDispatchSection({ preparing, shipped }: PendingDispatchSectionProps) {
   return (
-    <section className="grid grid-cols-1 gap-lg lg:grid-cols-2">
+    <section className="grid min-w-0 w-full max-w-full grid-cols-1 gap-lg lg:grid-cols-2">
       <DispatchCard
         title="Pedidos pendientes por enviar"
         description="Pagados y en preparación — marcar como enviado en Despacho"

@@ -1,4 +1,4 @@
-export type StockLevel = 'high' | 'medium' | 'low' | 'critical'
+export type StockLevel = 'high' | 'medium' | 'low' | 'critical' | 'out_of_stock'
 
 export type ProductStatus = 'active' | 'inactive' | 'out_of_stock' | 'archived'
 
@@ -164,6 +164,7 @@ export interface AppNotification {
   message: string
   type: string
   saleId?: string
+  invoiceId?: string
   isRead: boolean
   createdAt: string
 }

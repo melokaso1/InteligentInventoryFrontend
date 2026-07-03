@@ -56,7 +56,7 @@ export function CreateManualSaleDrawer({
       try {
         const result = await fetchProducts({ pageSize: 100, q: productSearch || undefined }, controller.signal)
         if (!cancelled) {
-          setProducts(result.items.filter((p) => p.status === 'active' || p.status === 'out_of_stock'))
+          setProducts(result.items.filter((p) => p.status === 'active' && p.stock > 0))
         }
       } catch {
         if (!cancelled) setProducts([])
@@ -247,7 +247,8 @@ export function CreateManualSaleDrawer({
                   key={product.id}
                   type="button"
                   onClick={() => addProduct(product)}
-                  className="flex w-full items-center justify-between gap-sm border-b border-outline-variant/30 px-md py-sm text-left transition-colors last:border-0 hover:bg-surface-container-high"
+                  disabled={product.stock <= 0}
+                  className="flex w-full items-center justify-between gap-sm border-b border-outline-variant/30 px-md py-sm text-left transition-colors last:border-0 hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-body-md text-on-surface">{product.name}</p>

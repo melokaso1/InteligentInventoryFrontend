@@ -80,7 +80,7 @@ export function StatusBadge({ variant, label, className = '' }: StatusBadgeProps
 
   return (
     <span
-      className={`inline-block whitespace-nowrap rounded px-2 py-1 text-xs font-semibold uppercase tracking-wider ${badgeStyles[variant]} ${className}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded px-2 py-1 text-xs font-semibold uppercase tracking-wider ${badgeStyles[variant]} ${className}`}
     >
       {displayLabel}
     </span>

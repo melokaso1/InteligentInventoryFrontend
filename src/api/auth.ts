@@ -34,6 +34,13 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return apiFetch<AuthUser>('/api/auth/me')
 }
 
+export async function attachChatSession(sessionId: string): Promise<void> {
+  await apiFetch<{ message: string }>('/api/chat/sessions/attach', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  })
+}
+
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await apiFetch<void>('/api/auth/change-password', {
     method: 'POST',

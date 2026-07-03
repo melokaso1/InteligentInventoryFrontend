@@ -1,10 +1,9 @@
 import { NavLink } from 'react-router-dom'
-import { isAdmin } from '../../hooks/useAuth'
+import { isAdmin, isLoggedIn } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
-import { NotificationDropdown } from '../notifications/NotificationDropdown'
 import { Icon } from '../ui/Icon'
 import { Logo } from '../ui/Logo'
-import { ThemeToggle } from '../ui/ThemeToggle'
+import { UserMenu } from './UserMenu'
 
 const HEADER_TABS = [
   { label: 'Resumen', to: '/', end: true, adminOnly: true },
@@ -15,11 +14,12 @@ const HEADER_TABS = [
 export function Header() {
   const { toggle: toggleSidebar } = useSidebar()
   const admin = isAdmin()
+  const loggedIn = isLoggedIn()
   const visibleTabs = HEADER_TABS.filter((tab) => !('adminOnly' in tab && tab.adminOnly) || admin)
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 max-w-full shrink-0 items-center justify-between gap-md border-b border-outline-variant bg-surface px-md shadow-sm sm:px-lg lg:ml-sidebar-width lg:w-[calc(100%-var(--spacing-sidebar-width))]">
-      <div className="flex min-w-0 flex-1 items-center gap-md sm:gap-xl">
+    <header className="sticky top-0 z-30 grid h-16 w-full min-w-0 max-w-full shrink-0 grid-cols-3 items-center border-b border-outline-variant bg-surface px-md shadow-sm sm:px-lg lg:flex lg:justify-between lg:gap-md lg:ml-sidebar-width lg:w-[calc(100%-var(--spacing-sidebar-width))]">
+      <div className="flex items-center justify-start lg:min-w-0 lg:flex-1">
         <button
           type="button"
           aria-label="Abrir menú"
@@ -28,15 +28,13 @@ export function Header() {
         >
           <Icon name="menu" />
         </button>
-        <Logo
-          size="sm"
-          showText
-          className="shrink-0 lg:hidden"
-          textClassName="font-headline-sm text-headline-sm font-extrabold text-on-primary-fixed dark:text-primary"
-        />
       </div>
 
-      <nav className="flex shrink-0 items-center gap-md sm:gap-lg">
+      <div className="flex items-center justify-center lg:hidden">
+        <Logo size="sm" iconClassName="h-10 max-h-10 w-auto object-contain" />
+      </div>
+
+      <nav className="flex items-center justify-end gap-md sm:gap-lg lg:shrink-0">
         <div className="hidden items-center gap-md font-label-md text-label-md md:flex">
           {visibleTabs.map((tab) => (
             <NavLink
@@ -56,16 +54,7 @@ export function Header() {
           ))}
         </div>
         <div className="hidden h-6 w-px bg-outline-variant sm:block" />
-        <div className="flex items-center gap-md">
-          <NotificationDropdown />
-          <ThemeToggle />
-          <span
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant bg-surface-container-high text-on-surface-variant"
-            aria-label="Perfil"
-          >
-            <Icon name="account_circle" size={28} />
-          </span>
-        </div>
+        <UserMenu loggedIn={loggedIn} />
       </nav>
     </header>
   )

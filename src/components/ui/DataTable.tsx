@@ -58,9 +58,9 @@ export function DataTable<T>({
               <div
                 key={rowId}
                 onClick={() => onRowClick?.(row)}
-                className={rowClassName(isSelected)}
+                className={`${rowClassName(isSelected)} flex h-[6.5rem] min-h-[6.5rem] max-h-[6.5rem] items-center overflow-hidden px-md`}
               >
-                {renderMobileCard(row, isSelected)}
+                <div className="min-w-0 flex-1">{renderMobileCard(row, isSelected)}</div>
               </div>
             )
           })}

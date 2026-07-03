@@ -1,24 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { InventoryItem } from '../types'
-import { getUserFacingApiError } from '../api/client'
+import { getUserFacingApiError, isAbortError } from '../api/client'
 import {
   createInventoryAdjustment,
   fetchInventory,
   fetchInventoryCategories,
   fetchInventoryStats,
   fetchStockMovements,
+  getProductCategoriesCached,
 } from '../api'
 import { Icon } from '../components/ui/Icon'
 import { Toast } from '../components/ui/Toast'
 import { formatCOP, formatCOPCompact } from '../utils/format'
 import { Modal } from '../components/ui/Modal'
 import {
+  buildVisiblePageNumbers,
   PaginationControls,
   PaginationFooter,
   PaginationIconButton,
   PaginationInfo,
   PaginationPageButton,
+  PaginationPages,
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
@@ -26,6 +29,7 @@ import type { StockMovement } from '../types'
 import { useToast } from '../hooks/useToast'
 import { formatSecondsSince, useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { notifyDataMutation } from '../utils/dataSync'
+import { padToPageSize } from '../utils/paginatedGrid'
 import { StockStatusHelpCard } from '../components/inventory/StockStatusHelpCard'
 
 const stockLevelBadge: Record<string, string> = {
@@ -33,6 +37,7 @@ const stockLevelBadge: Record<string, string> = {
   medium: 'bg-tertiary-container text-on-tertiary-container border border-outline-variant',
   low: 'bg-on-tertiary-fixed-variant/10 text-on-tertiary-fixed-variant border border-outline-variant',
   critical: 'bg-error/10 text-error border border-error/20',
+  out_of_stock: 'bg-error/10 text-error border border-error/20',
 }
 
 const stockLevelLabels: Record<string, string> = {
@@ -40,10 +45,12 @@ const stockLevelLabels: Record<string, string> = {
   medium: 'MEDIO',
   low: 'BAJO',
   critical: 'CRÍTICO',
+  out_of_stock: 'SIN STOCK',
 }
 
 const stockLevelOptions = [
   { value: '', label: 'Todos los niveles de stock' },
+  { value: 'out_of_stock', label: 'Sin stock' },
   { value: 'critical', label: 'Crítico' },
   { value: 'low', label: 'Bajo' },
   { value: 'medium', label: 'Medio' },
@@ -51,7 +58,7 @@ const stockLevelOptions = [
 ] as const
 
 const PAGE_SIZE = 15
-const MOVEMENTS_PAGE_SIZE = 10
+const MOVEMENTS_PAGE_SIZE = 8
 
 const ADJUSTMENT_REASONS = [
   'Corrección manual',
@@ -85,6 +92,22 @@ function clampAdjustmentDelta(
   return { delta, capped: false }
 }
 
+function MovementRowPlaceholder() {
+  return (
+    <div
+      aria-hidden
+      className="invisible pointer-events-none flex h-[4.75rem] min-h-[4.75rem] max-h-[4.75rem] items-start gap-md overflow-hidden"
+    >
+      <div className="h-8 w-8 shrink-0 rounded-full" />
+      <div className="min-w-0 flex-1">
+        <div className="h-[2.5rem] w-3/4" />
+        <div className="mt-0.5 h-4 w-1/2" />
+        <div className="mt-0.5 h-3 w-1/3" />
+      </div>
+    </div>
+  )
+}
+
 export function InventoryPage() {
   const { toastMessage, showToast, dismissToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -107,7 +130,7 @@ export function InventoryPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [stockLevelFilter, setStockLevelFilter] = useState('')
-  const [categories, setCategories] = useState<string[]>([])
+  const [categories, setCategories] = useState<string[]>(() => getProductCategoriesCached())
   const [modalOpen, setModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
@@ -140,7 +163,7 @@ export function InventoryPage() {
     }
   }, [movementsPage])
 
-  const reloadInventoryTable = useCallback(async (signal?: AbortSignal) => {
+  const reloadInventoryTable = useCallback(async (signal?: AbortSignal): Promise<'aborted' | 'complete'> => {
     const requestId = ++inventoryRequestId.current
     try {
       const inventoryResult = await fetchInventory(
@@ -153,13 +176,15 @@ export function InventoryPage() {
         },
         signal,
       )
-      if (requestId !== inventoryRequestId.current) return
+      if (requestId !== inventoryRequestId.current) return 'complete'
       setInventoryItems(inventoryResult.items)
       setTotalCount(inventoryResult.totalCount)
+      return 'complete'
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      if (requestId !== inventoryRequestId.current) return
+      if (isAbortError(err)) return 'aborted'
+      if (requestId !== inventoryRequestId.current) return 'complete'
       // Keep current rows if a refresh fails.
+      return 'complete'
     }
   }, [debouncedSearch, categoryFilter, stockLevelFilter, page])
 
@@ -214,7 +239,8 @@ export function InventoryPage() {
     const controller = new AbortController()
     if (!isInitialLoad.current) setRefreshing(true)
 
-    void reloadInventoryTable(controller.signal).finally(() => {
+    void reloadInventoryTable(controller.signal).then((result) => {
+      if (result === 'aborted') return
       if (isInitialLoad.current) {
         isInitialLoad.current = false
         setLoading(false)
@@ -286,6 +312,7 @@ export function InventoryPage() {
   }, [adjustProductDropdownOpen, selectedItem])
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const visiblePages = buildVisiblePageNumbers(page, totalPages)
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
 
@@ -293,6 +320,11 @@ export function InventoryPage() {
   const movementsRangeStart =
     movementsTotalCount === 0 ? 0 : (movementsPage - 1) * MOVEMENTS_PAGE_SIZE + 1
   const movementsRangeEnd = Math.min(movementsPage * MOVEMENTS_PAGE_SIZE, movementsTotalCount)
+
+  const paddedMovements = useMemo(
+    () => padToPageSize(stockMovements, MOVEMENTS_PAGE_SIZE),
+    [stockMovements],
+  )
 
   const inventoryKpis = [
     {
@@ -576,13 +608,17 @@ export function InventoryPage() {
         </div>
 
         <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
-          <div className="flex min-w-0 flex-col flex-wrap items-stretch gap-md border-b border-outline-variant bg-surface-container-low p-md sm:flex-row sm:items-center">
-            <div className="relative min-w-0 flex-1">
+          <div className="flex min-w-0 flex-row flex-wrap items-end gap-md border-b border-outline-variant bg-surface-container-low p-md">
+            <div className="relative min-w-0 flex-[2] min-w-[140px] md:min-w-[180px]">
+              <label htmlFor="inventory-search" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+                Buscar
+              </label>
               <Icon
                 name="filter_list"
-                className="absolute left-3 top-1/2 -translate-y-1/2 scale-90 text-outline"
+                className="absolute left-3 bottom-2.5 scale-90 text-outline"
               />
               <input
+                id="inventory-search"
                 className="w-full rounded border border-outline-variant bg-surface-container-lowest py-2 pl-10 pr-4 text-sm focus:border-primary focus:ring-0"
                 placeholder="Filtrar por producto o SKU..."
                 type="text"
@@ -590,33 +626,112 @@ export function InventoryPage() {
                 onChange={(e) => setSearchInput(e.target.value)}
               />
             </div>
-            <Select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="min-w-0 w-full rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none sm:w-auto"
-            >
-              <option value="">Todas las categorías</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={stockLevelFilter}
-              onChange={(e) => setStockLevelFilter(e.target.value)}
-              className="min-w-0 w-full rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none sm:w-auto"
-            >
-              {stockLevelOptions.map((option) => (
-                <option key={option.value || 'all'} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
+            <div className="min-w-0 flex-1 min-w-[140px] md:min-w-[180px]">
+              <label htmlFor="inventory-category-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+                Categoría
+              </label>
+              <Select
+                id="inventory-category-filter"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="w-full min-w-0 rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none"
+              >
+                <option value="">Todas las categorías</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="min-w-0 flex-1 min-w-[140px] md:min-w-[180px]">
+              <label htmlFor="inventory-stock-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+                Nivel de stock
+              </label>
+              <Select
+                id="inventory-stock-filter"
+                value={stockLevelFilter}
+                onChange={(e) => setStockLevelFilter(e.target.value)}
+                className="w-full min-w-0 rounded border border-outline-variant bg-surface-container-lowest pl-3 py-2 text-sm focus:border-primary focus:ring-0 outline-none"
+              >
+                {stockLevelOptions.map((option) => (
+                  <option key={option.value || 'all'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
           <StockStatusHelpCard />
 
-          <div className={`min-w-0 max-w-full overflow-x-auto ${refreshing ? 'opacity-60' : ''}`}>
+          <div className={`divide-y divide-outline-variant/40 md:hidden ${refreshing ? 'opacity-60' : ''}`}>
+            {inventoryItems.length === 0 ? (
+              <p className="px-gutter py-8 text-center text-on-surface-variant">
+                No se encontraron productos con los filtros actuales.
+              </p>
+            ) : (
+              inventoryItems.map((row) => (
+                <article
+                  key={row.id}
+                  onClick={() => openAdjustModal(row)}
+                  className="grid h-[6.5rem] min-h-[6.5rem] max-h-[6.5rem] cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-gutter py-3 transition-colors hover:bg-primary/[0.04]"
+                >
+                  <div className="min-w-0 overflow-hidden">
+                    <p className="line-clamp-2 h-[2.5rem] overflow-hidden font-body-md font-bold leading-snug text-on-surface">
+                      {row.name}
+                    </p>
+                    <p className="truncate font-mono text-xs font-normal text-on-surface-variant">{row.sku}</p>
+                  </div>
+                  <span className="line-clamp-1 max-w-[5.5rem] self-start text-right font-body-sm text-body-sm text-on-surface">
+                    {row.category}
+                  </span>
+                  <div className="col-span-2 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="whitespace-nowrap font-body-sm text-body-sm">
+                        <span className="font-semibold text-on-surface">
+                          {row.quantity.toLocaleString('es-CO')}
+                        </span>
+                        <span className="text-on-surface-variant">
+                          {' '}
+                          / {row.maxStock.toLocaleString('es-CO')} uds.
+                        </span>
+                      </span>
+                      <span
+                        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-tighter ${stockLevelBadge[row.stockLevel]}`}
+                      >
+                        {stockLevelLabels[row.stockLevel] ?? row.stockLevel}
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="whitespace-nowrap font-body-sm text-body-sm">
+                        {formatCOP(row.unitPrice)}
+                      </span>
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => openAdjustModal(row)}
+                          className="rounded p-2 text-primary transition-colors hover:bg-primary/10"
+                          title="Ajustar stock"
+                        >
+                          <Icon name="edit_square" size={18} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openDetailModal(row)}
+                          className="rounded p-2 text-on-surface-variant transition-colors hover:bg-secondary/10"
+                          title="Ver detalles"
+                        >
+                          <Icon name="visibility" size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+
+          <div className={`hidden min-w-0 max-w-full overflow-x-auto md:block ${refreshing ? 'opacity-60' : ''}`}>
             <table className="w-full min-w-[720px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-outline-variant bg-surface-container-high/50">
@@ -687,7 +802,7 @@ export function InventoryPage() {
                     </td>
                     <td className="px-gutter py-4">
                       <span
-                        className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-tighter ${stockLevelBadge[row.stockLevel]}`}
+                        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-tighter ${stockLevelBadge[row.stockLevel]}`}
                       >
                         {stockLevelLabels[row.stockLevel] ?? row.stockLevel}
                       </span>
@@ -749,15 +864,39 @@ export function InventoryPage() {
                 className="disabled:opacity-30"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
               />
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNumber) => (
-                <PaginationPageButton
-                  key={pageNumber}
-                  active={pageNumber === page}
-                  onClick={() => setPage(pageNumber)}
-                >
-                  {pageNumber}
-                </PaginationPageButton>
-              ))}
+              <PaginationPages>
+                {visiblePages.length > 0 && visiblePages[0] > 1 ? (
+                  <>
+                    <PaginationPageButton onClick={() => setPage(1)}>1</PaginationPageButton>
+                    {visiblePages[0] > 2 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+                {visiblePages.map((pageNumber) => (
+                  <PaginationPageButton
+                    key={pageNumber}
+                    active={pageNumber === page}
+                    onClick={() => setPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </PaginationPageButton>
+                ))}
+                {visiblePages.length > 0 && visiblePages[visiblePages.length - 1] < totalPages ? (
+                  <>
+                    {visiblePages[visiblePages.length - 1] < totalPages - 1 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                    <PaginationPageButton onClick={() => setPage(totalPages)}>
+                      {totalPages}
+                    </PaginationPageButton>
+                  </>
+                ) : null}
+              </PaginationPages>
               <PaginationIconButton
                 icon="chevron_right"
                 disabled={page >= totalPages || totalPages === 0}
@@ -768,39 +907,48 @@ export function InventoryPage() {
           </PaginationFooter>
         </div>
 
-        <div className="rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
+        <div className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
           <div className="border-b border-outline-variant p-lg">
             <h4 className="font-headline-sm text-headline-sm text-on-surface">Movimientos recientes</h4>
           </div>
-          <div className="space-y-md p-lg">
+          <div className="flex flex-1 flex-col space-y-md p-lg">
             {stockMovements.length === 0 ? (
               <p className="text-on-surface-variant">Sin movimientos recientes</p>
             ) : (
-              stockMovements.map((m) => (
-                <div key={m.id} className="flex items-start gap-md">
+              paddedMovements.map((m, index) =>
+                m ? (
                   <div
-                    className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full ${
-                      m.type === 'inbound'
-                        ? 'bg-primary-container/30 text-on-primary-container'
-                        : m.type === 'outbound'
-                          ? 'bg-error-container/20 text-error'
-                          : 'bg-warning-container/80 text-on-warning-container'
-                    }`}
+                    key={m.id}
+                    className="flex h-[4.75rem] min-h-[4.75rem] max-h-[4.75rem] items-start gap-md overflow-hidden"
                   >
-                    <Icon
-                      name={m.type === 'inbound' ? 'arrow_downward' : m.type === 'outbound' ? 'arrow_upward' : 'edit'}
-                      size={16}
-                    />
+                    <div
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                        m.type === 'inbound'
+                          ? 'bg-primary-container/30 text-on-primary-container'
+                          : m.type === 'outbound'
+                            ? 'bg-error-container/20 text-error'
+                            : 'bg-warning-container/80 text-on-warning-container'
+                      }`}
+                    >
+                      <Icon
+                        name={m.type === 'inbound' ? 'arrow_downward' : m.type === 'outbound' ? 'arrow_upward' : 'edit'}
+                        size={16}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <p className="line-clamp-2 h-[2.5rem] overflow-hidden font-body-md font-semibold leading-snug">
+                        {m.detail}
+                      </p>
+                      <p className="truncate font-body-sm text-body-sm text-on-surface-variant">
+                        {m.sku} • {m.change}
+                      </p>
+                      <p className="truncate font-mono-sm text-mono-sm text-outline">{m.timestamp}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-body-md font-semibold">{m.detail}</p>
-                    <p className="font-body-sm text-body-sm text-on-surface-variant">
-                      {m.sku} • {m.change}
-                    </p>
-                    <p className="mt-1 font-mono-sm text-mono-sm text-outline">{m.timestamp}</p>
-                  </div>
-                </div>
-              ))
+                ) : (
+                  <MovementRowPlaceholder key={`movement-placeholder-${index}`} />
+                ),
+              )
             )}
           </div>
           {movementsTotalCount > 0 && (

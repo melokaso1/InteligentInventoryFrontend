@@ -11,8 +11,13 @@ import type {
   Sale,
   StockMovement,
 } from '../types'
-import { apiFetch, buildApiError, type PagedResponse } from './client'
-import { buildCacheKey, cachedFetch } from './cache'
+import { apiFetch, buildApiError, ngrokSkipHeaders, type PagedResponse } from './client'
+import {
+  PERSIST_KEYS,
+  PERSIST_TTL_MS,
+  readPersisted,
+  writePersisted,
+} from '../utils/persistedCache'
 import { getToken, getCurrentUser } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
@@ -23,14 +28,6 @@ export const CHAT_SESSION_USER_KEY = 'elplonsazo-chat-session-user'
 function chatSessionStorageKey(userId?: string | null): string {
   const id = userId ?? getCurrentUser()?.id ?? 'guest'
   return `elplonsazo-chat-session-${id}`
-}
-
-function apiRequestHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {}
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('ngrok-free.dev')) {
-    headers['ngrok-skip-browser-warning'] = 'true'
-  }
-  return headers
 }
 
 interface ApiProduct {
@@ -307,17 +304,18 @@ function mapInvoice(i: ApiInvoice): Invoice {
     tax: i.tax,
     total: i.total,
     source: i.source,
+    saleId: i.saleId,
+    deliveryAddress: i.deliveryAddress,
+    deliveryCity: i.deliveryCity,
   }
 }
 
 export async function fetchDashboardKpis(): Promise<DashboardKpi[]> {
-  const path = '/api/dashboard/kpis'
-  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiDashboardKpi[]>(path))
+  return apiFetch<ApiDashboardKpi[]>('/api/dashboard/kpis')
 }
 
 export async function fetchLowStock(): Promise<LowStockItem[]> {
-  const path = '/api/dashboard/low-stock'
-  const items = await cachedFetch(buildCacheKey(path), () => apiFetch<ApiLowStockItem[]>(path))
+  const items = await apiFetch<ApiLowStockItem[]>('/api/dashboard/low-stock')
   return items.map((item) => ({
     id: item.id,
     name: item.name,
@@ -329,8 +327,7 @@ export async function fetchLowStock(): Promise<LowStockItem[]> {
 }
 
 export async function fetchActivity(limit = 20): Promise<ActivityItem[]> {
-  const path = `/api/dashboard/activity?limit=${limit}`
-  return cachedFetch(buildCacheKey(path), () => apiFetch<ActivityItem[]>(path))
+  return apiFetch<ActivityItem[]>(`/api/dashboard/activity?limit=${limit}`)
 }
 
 export async function fetchProducts(params?: {
@@ -344,24 +341,43 @@ export async function fetchProducts(params?: {
   if (params?.q) search.set('q', params.q)
   if (params?.category) search.set('category', params.category)
   if (params?.status) search.set('status', params.status)
-  if (params?.page) search.set('page', String(params.page))
-  if (params?.pageSize) search.set('pageSize', String(params.pageSize))
-  const query = search.toString()
-  const url = `/api/products${query ? `?${query}` : ''}`
-  const data = await cachedFetch(buildCacheKey(url), () =>
-    apiFetch<PagedResponse<ApiProduct>>(url, { signal }),
-  )
+  search.set('page', String(params?.page ?? 1))
+  search.set('pageSize', String(params?.pageSize ?? 15))
+  const url = `/api/products?${search.toString()}`
+  const data = await apiFetch<PagedResponse<ApiProduct>>(url, { signal })
   return { ...data, items: data.items.map(mapProduct) }
 }
 
 export async function fetchProductStats(): Promise<ApiProductStats> {
-  const path = '/api/products/stats'
-  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiProductStats>(path))
+  // Stats must always reflect the latest catalog state (toggle, create, delete).
+  return apiFetch<ApiProductStats>('/api/products/stats')
 }
 
-export async function fetchProductCategories(signal?: AbortSignal): Promise<string[]> {
-  const path = '/api/products/categories'
-  return cachedFetch(buildCacheKey(path), () => apiFetch<string[]>(path, { signal }))
+export async function fetchProductCategories(): Promise<string[]> {
+  const data = await fetchProductCategoriesFromApi()
+  if (data.length > 0) {
+    writePersisted(PERSIST_KEYS.productCategories, data)
+  }
+  return data
+}
+
+export function getProductCategoriesCached(): string[] {
+  const cached = readPersisted<string[]>(
+    PERSIST_KEYS.productCategories,
+    PERSIST_TTL_MS.productCategories,
+  )
+  return cached && cached.length > 0 ? cached : []
+}
+
+let productCategoriesInflight: Promise<string[]> | null = null
+
+function fetchProductCategoriesFromApi(): Promise<string[]> {
+  if (!productCategoriesInflight) {
+    productCategoriesInflight = apiFetch<string[]>('/api/products/categories').finally(() => {
+      productCategoriesInflight = null
+    })
+  }
+  return productCategoriesInflight
 }
 
 export interface CreateProductPayload {
@@ -434,9 +450,7 @@ export async function fetchInventory(
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
   const url = `/api/inventory${query ? `?${query}` : ''}`
-  const data = await cachedFetch(buildCacheKey(url), () =>
-    apiFetch<PagedResponse<ApiInventoryItem>>(url, { signal }),
-  )
+  const data = await apiFetch<PagedResponse<ApiInventoryItem>>(url, { signal })
   return {
     ...data,
     items: data.items.map((item) => ({
@@ -455,13 +469,12 @@ export async function fetchInventory(
   }
 }
 
-export async function fetchInventoryCategories(signal?: AbortSignal): Promise<string[]> {
-  return apiFetch<string[]>('/api/inventory/categories', { signal })
+export async function fetchInventoryCategories(): Promise<string[]> {
+  return fetchProductCategories()
 }
 
 export async function fetchInventoryStats(): Promise<ApiInventoryStats> {
-  const path = '/api/inventory/stats'
-  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiInventoryStats>(path))
+  return apiFetch<ApiInventoryStats>('/api/inventory/stats')
 }
 
 export async function fetchStockMovements(params?: {
@@ -543,7 +556,7 @@ export async function fetchSales(params?: {
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
   const url = `/api/sales${query ? `?${query}` : ''}`
-  const data = await cachedFetch(buildCacheKey(url), () => apiFetch<PagedResponse<ApiSale>>(url))
+  const data = await apiFetch<PagedResponse<ApiSale>>(url)
   return { ...data, items: data.items.map(mapSale) }
 }
 
@@ -560,7 +573,7 @@ export async function fetchSaleMetrics(params?: {
   if (params?.status) search.set('status', params.status)
   const query = search.toString()
   const url = `/api/sales/metrics${query ? `?${query}` : ''}`
-  return cachedFetch(buildCacheKey(url), () => apiFetch<ApiSaleMetrics>(url))
+  return apiFetch<ApiSaleMetrics>(url)
 }
 
 export async function createManualSale(payload: CreateManualSalePayload): Promise<Sale> {
@@ -589,17 +602,16 @@ export async function fetchInvoices(params?: {
   if (params?.status) search.set('status', params.status)
   const query = search.toString()
   const url = `/api/invoices${query ? `?${query}` : ''}`
-  const data = await cachedFetch(buildCacheKey(url), () => apiFetch<PagedResponse<ApiInvoice>>(url))
+  const data = await apiFetch<PagedResponse<ApiInvoice>>(url)
   return { ...data, items: data.items.map(mapInvoice) }
 }
 
 export async function fetchInvoiceStats(): Promise<ApiInvoiceStats> {
-  const path = '/api/invoices/stats'
-  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiInvoiceStats>(path))
+  return apiFetch<ApiInvoiceStats>('/api/invoices/stats')
 }
 
 export async function fetchInvoicePdf(invoiceId: string): Promise<{ blob: Blob; filename: string }> {
-  const headers: Record<string, string> = { ...apiRequestHeaders() }
+  const headers: Record<string, string> = { ...ngrokSkipHeaders() }
   const token = getToken()
   if (token) {
     headers.Authorization = `Bearer ${token}`
@@ -721,6 +733,19 @@ export function createNewChatSession(): string {
   return id
 }
 
+export function migrateGuestChatSessionOnLogin(userId?: string): void {
+  const resolvedUserId = userId ?? getCurrentUser()?.id
+  if (!resolvedUserId) return
+
+  const guestKey = chatSessionStorageKey('guest')
+  const guestSessionId = sessionStorage.getItem(guestKey)
+  if (!guestSessionId) return
+
+  sessionStorage.setItem(chatSessionStorageKey(resolvedUserId), guestSessionId)
+  sessionStorage.removeItem(guestKey)
+  sessionStorage.setItem(CHAT_SESSION_USER_KEY, resolvedUserId)
+}
+
 export function mapChatHistoryToMessages(history: ChatHistoryMessage[]): import('../types').ChatMessage[] {
   return history.map((item, index) => {
     let metadata: ChatHistoryBotMetadata | null = null
@@ -779,6 +804,7 @@ interface ApiNotification {
   message: string
   type: string
   saleId?: string
+  invoiceId?: string
   isRead: boolean
   createdAt: string
 }
@@ -842,14 +868,14 @@ function mapNotification(n: ApiNotification): AppNotification {
     message: n.message,
     type: n.type,
     saleId: n.saleId,
+    invoiceId: n.invoiceId,
     isRead: n.isRead,
     createdAt: n.createdAt,
   }
 }
 
 export async function fetchNotifications(): Promise<NotificationList> {
-  const path = '/api/notifications'
-  const result = await cachedFetch(buildCacheKey(path), () => apiFetch<ApiNotificationList>(path))
+  const result = await apiFetch<ApiNotificationList>('/api/notifications')
   return {
     unreadCount: result.unreadCount ?? 0,
     items: (result.items ?? []).map(mapNotification),
@@ -858,4 +884,8 @@ export async function fetchNotifications(): Promise<NotificationList> {
 
 export async function markNotificationRead(id: string): Promise<void> {
   await apiFetch(`/api/notifications/${id}/read`, { method: 'PATCH' })
+}
+
+export async function clearAllNotifications(): Promise<void> {
+  await apiFetch('/api/notifications', { method: 'DELETE' })
 }

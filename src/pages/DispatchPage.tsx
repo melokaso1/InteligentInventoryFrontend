@@ -72,6 +72,7 @@ function groupOrdersByDate(orders: Sale[]) {
 
 export function DispatchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const highlightSaleId = searchParams.get('saleId')
   const { toastMessage, showToast, dismissToast } = useToast()
   const [orders, setOrders] = useState<Sale[]>([])
   const [totalCount, setTotalCount] = useState(0)
@@ -131,11 +132,14 @@ export function DispatchPage() {
 
   const handleStatusFilterChange = (value: 'all' | FulfillmentStatus) => {
     setStatusFilter(value)
-    if (value === 'preparing') {
-      setSearchParams({}, { replace: true })
-    } else {
-      setSearchParams({ tab: value }, { replace: true })
+    const nextParams: Record<string, string> = {}
+    if (value !== 'preparing') {
+      nextParams.tab = value
     }
+    if (highlightSaleId) {
+      nextParams.saleId = highlightSaleId
+    }
+    setSearchParams(nextParams, { replace: true })
   }
 
   const handleStatusUpdate = async (sale: Sale, nextStatus: 'shipped' | 'delivered') => {
@@ -179,6 +183,12 @@ export function DispatchPage() {
           <div>
             <p className="font-body-md text-on-surface">{row.customer}</p>
             <p className="text-body-sm text-on-surface-variant">{row.email}</p>
+            {(row.deliveryAddress || row.deliveryCity) && (
+              <p className="mt-1 text-body-sm text-on-surface-variant">
+                <Icon name="location_on" size={14} className="mr-0.5 inline align-text-bottom" />
+                {[row.deliveryAddress, row.deliveryCity].filter(Boolean).join(', ')}
+              </p>
+            )}
           </div>
         ),
       },
@@ -282,19 +292,19 @@ export function DispatchPage() {
           </ol>
         </div>
 
-        <div className="mt-md">
+        <div className="mt-md min-w-0 w-full">
           <label className="mb-1 block font-label-md text-label-md text-on-surface-variant">
             Filtrar por estado
           </label>
-          <div className="flex overflow-hidden rounded-lg border border-outline bg-surface-container-lowest">
+          <div className="grid w-full min-w-0 grid-cols-4 overflow-hidden rounded-lg border border-outline bg-surface-container-lowest">
             {statusFilterTabs.map((tab) => (
               <button
                 key={tab.value}
                 type="button"
                 onClick={() => handleStatusFilterChange(tab.value)}
-                className={`flex min-w-0 flex-1 items-center justify-center px-3 py-2.5 text-body-md transition-colors ${
+                className={`min-w-0 px-1 py-2.5 text-center text-body-sm font-medium whitespace-nowrap transition-colors sm:px-2 sm:text-body-md ${
                   statusFilter === tab.value
-                    ? 'bg-primary font-semibold text-on-primary'
+                    ? 'bg-primary text-on-primary'
                     : 'text-on-surface-variant hover:bg-primary/10'
                 }`}
               >
@@ -333,7 +343,12 @@ export function DispatchPage() {
               <div className="border-b border-outline-variant bg-surface-container-low px-lg py-sm">
                 <h5 className="font-label-md text-label-md text-on-surface-variant">{group.label}</h5>
               </div>
-              <DataTable columns={tableColumns} data={group.items} getRowId={(row) => row.id} />
+              <DataTable
+                columns={tableColumns}
+                data={group.items}
+                getRowId={(row) => row.id}
+                selectedId={highlightSaleId ?? undefined}
+              />
             </section>
           ))}
         </div>

@@ -1,7 +1,13 @@
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { login as apiLogin, register as apiRegister, type AuthUser } from '../api/auth'
-import { clearChatSession } from '../api'
+import { migrateGuestChatSessionOnLogin } from '../api'
+import {
+  attachChatSession,
+  login as apiLogin,
+  register as apiRegister,
+  type AuthUser,
+} from '../api/auth'
+import { clearChatSession, getChatSessionId } from '../api'
 
 const AUTH_KEY = 'erp-auth'
 const TOKEN_KEY = 'erp-token'
@@ -14,6 +20,11 @@ export interface RegisterData {
   name: string
   email: string
   password: string
+}
+
+export interface AuthNavigationOptions {
+  returnTo?: string | null
+  resumeCheckout?: boolean
 }
 
 function persistAuth(token: string, user: AuthUser) {
@@ -38,6 +49,22 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
+function resolvePostAuthPath(user: AuthUser, options?: AuthNavigationOptions): string {
+  const returnTo = options?.returnTo?.trim()
+  if (user.role === 'admin') {
+    if (returnTo && returnTo !== '/chatbot') {
+      return returnTo
+    }
+    return '/'
+  }
+
+  if (returnTo) {
+    return returnTo
+  }
+
+  return '/chatbot'
+}
+
 export function useAuth() {
   const navigate = useNavigate()
   const [isAuthenticated, setIsAuthenticated] = useState(
@@ -45,19 +72,36 @@ export function useAuth() {
   )
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, options?: AuthNavigationOptions) => {
+      const guestSessionId = options?.resumeCheckout ? getChatSessionId() : null
       const result = await apiLogin(email, password)
       persistAuth(result.token, result.user)
       setIsAuthenticated(true)
-      navigate(result.user.role === 'admin' ? '/' : '/chatbot')
+
+      if (guestSessionId) {
+        try {
+          await attachChatSession(guestSessionId)
+        } catch {
+          // Continue even if attach fails (session may already belong to user).
+        }
+        migrateGuestChatSessionOnLogin(result.user.id)
+      }
+
+      navigate(resolvePostAuthPath(result.user, options), {
+        state: options?.resumeCheckout ? { resumeCheckout: true } : undefined,
+      })
     },
     [navigate],
   )
 
   const register = useCallback(
-    async (data: RegisterData) => {
+    async (data: RegisterData, options?: AuthNavigationOptions) => {
       await apiRegister(data)
-      navigate('/login', { state: { registered: true, email: data.email } })
+      const params = new URLSearchParams()
+      params.set('email', data.email)
+      if (options?.returnTo) params.set('returnTo', options.returnTo)
+      if (options?.resumeCheckout) params.set('resumeCheckout', '1')
+      navigate(`/login?${params.toString()}`, { state: { registered: true, email: data.email } })
     },
     [navigate],
   )

@@ -1,11 +1,12 @@
 import { type FormEvent, type ReactNode, useState } from 'react'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError, getUserFacingApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { Modal } from '../components/ui/Modal'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
 import { isLoggedIn, useAuth } from '../hooks/useAuth'
+import { buildCheckoutRegisterUrl } from '../utils/checkoutAuth'
 
 const FOOTER_LINKS = ['Términos de Servicio', 'Política de Privacidad', 'Soporte TI'] as const
 
@@ -65,9 +66,12 @@ export function LoginPage() {
   const { login } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = searchParams.get('returnTo')
+  const resumeCheckout = searchParams.get('resumeCheckout') === '1'
   const registered = (location.state as { registered?: boolean; email?: string } | null)?.registered
   const [email, setEmail] = useState(
-    () => (location.state as { email?: string } | null)?.email ?? '',
+    () => searchParams.get('email') ?? (location.state as { email?: string } | null)?.email ?? '',
   )
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -83,7 +87,7 @@ export function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(email, password)
+      await login(email, password, { returnTo, resumeCheckout })
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Correo o contraseña incorrectos.')
@@ -99,21 +103,38 @@ export function LoginPage() {
     <div className="relative flex min-h-screen w-full items-center justify-center bg-background px-sm py-md sm:p-md">
       <main className="relative z-10 w-full max-w-[440px]">
         <div className="auth-card relative space-y-lg rounded-lg p-lg sm:p-xl">
-          <ThemeToggle variant="floating" className="top-md right-md sm:top-lg sm:right-lg" />
-          <header className="flex flex-col items-center space-y-sm">
-            <div className="flex items-center justify-center rounded-lg bg-primary-container px-md py-md">
+          <div className="flex items-center justify-between gap-sm">
+            <Link
+              to="/chatbot"
+              className="flex min-w-0 items-center gap-xs font-label-md text-label-md text-on-surface-variant transition-colors hover:text-primary"
+            >
+              <Icon name="arrow_back" size={18} className="shrink-0" />
+              Volver al inicio
+            </Link>
+            <ThemeToggle variant="inline" className="shrink-0" />
+          </div>
+          <header className="flex flex-col items-center gap-sm text-center">
+            <div className="flex w-full max-w-[11rem] items-center justify-center rounded-lg bg-primary-container p-md sm:max-w-[13rem] sm:p-lg">
               <Logo
                 size="lg"
-                showText
-                textClassName="font-headline-md text-headline-md font-extrabold text-on-primary-fixed dark:text-primary"
+                iconClassName="h-16 w-full max-w-full object-contain sm:h-20"
               />
             </div>
-            <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
+            <h1 className="font-headline-md text-headline-md font-extrabold text-on-surface">
+              El Plonsazo
+            </h1>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
               Acceso a la Suite Empresarial
             </p>
           </header>
 
           <form onSubmit={handleSubmit} className="space-y-md">
+            {resumeCheckout && (
+              <p className="rounded-lg border border-primary/30 bg-primary-container/30 px-md py-sm font-body-sm text-body-sm text-on-surface">
+                Para confirmar tu pedido, inicia sesión o regístrate. Tu carrito se conservará al volver al chat.
+              </p>
+            )}
+
             {registered && (
               <p className="rounded-lg border border-primary/30 bg-primary-container/30 px-md py-sm font-body-sm text-body-sm text-on-surface">
                 Cuenta creada correctamente. Inicia sesión para continuar.
@@ -169,7 +190,10 @@ export function LoginPage() {
 
           <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
             ¿No tienes cuenta?{' '}
-            <Link to="/register" className="font-semibold text-primary transition-colors hover:underline">
+            <Link
+              to={resumeCheckout ? buildCheckoutRegisterUrl() : '/register'}
+              className="font-semibold text-primary transition-colors hover:underline"
+            >
               Registrarse
             </Link>
           </p>

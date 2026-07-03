@@ -14,21 +14,24 @@ import {
   type ChatOperationSummary,
 } from '../api'
 import { ApiError, getUserFacingApiError } from '../api/client'
-import { getCurrentUser, isAdmin } from '../hooks/useAuth'
+import { getCurrentUser, isAdmin, isLoggedIn } from '../hooks/useAuth'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { notifyDataMutation } from '../utils/dataSync'
+import {
+  buildCheckoutLoginUrl,
+  CHECKOUT_AUTH_MESSAGE,
+  messageRequiresCheckoutAuth,
+} from '../utils/checkoutAuth'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
 import { PurchaseTutorialPanel } from '../components/chat/PurchaseTutorialPanel'
 import { Icon } from '../components/ui/Icon'
-import { PageHelpCard } from '../components/ui/PageHelpCard'
-
 type MobileView = 'chat' | 'summary'
 type HealthStatus = 'checking' | 'healthy' | 'unhealthy'
 
-const TUTORIAL_DESKTOP_KEY_ADMIN = 'plonsazo-chat-tutorial-open'
-const TUTORIAL_DESKTOP_KEY_CLIENTE = 'plonsazo-chat-tutorial-open-cliente'
+const TUTORIAL_DESKTOP_KEY_ADMIN = 'plonsazo-chat-tutorial-open-v2'
+const TUTORIAL_DESKTOP_KEY_CLIENTE = 'plonsazo-chat-tutorial-open-cliente-v2'
 
 function getTutorialDesktopStorageKey() {
   return isAdmin() ? TUTORIAL_DESKTOP_KEY_ADMIN : TUTORIAL_DESKTOP_KEY_CLIENTE
@@ -74,10 +77,6 @@ function getChatErrorMessage(err: unknown): string {
   return getUserFacingApiError(err, 'No pude procesar tu mensaje. Inténtalo de nuevo.', 'chat')
 }
 
-function getHealthBannerMessage(err: unknown): string {
-  return getUserFacingApiError(err, 'El asistente no está disponible en este momento. Intenta de nuevo más tarde.', 'chat')
-}
-
 export function ChatbotPage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -92,11 +91,11 @@ export function ChatbotPage() {
   const [fulfillmentStatus, setFulfillmentStatus] = useState<FulfillmentStatus | null>(null)
   const [sessionId, setSessionId] = useState(() => getChatSessionId())
   const [healthStatus, setHealthStatus] = useState<HealthStatus>('checking')
-  const [healthBanner, setHealthBanner] = useState('')
   const [tutorialDesktopOpen, setTutorialDesktopOpen] = useState(
-    () => localStorage.getItem(getTutorialDesktopStorageKey()) !== 'false',
+    () => localStorage.getItem(getTutorialDesktopStorageKey()) === 'true',
   )
   const [tutorialMobileOpen, setTutorialMobileOpen] = useState(false)
+  const [resumeCheckoutBanner, setResumeCheckoutBanner] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const scrollBehaviorRef = useRef<ScrollBehavior>('smooth')
   const sentInitialForKey = useRef<string | null>(null)
@@ -107,6 +106,8 @@ export function ChatbotPage() {
   const chatAvailable = healthStatus === 'healthy'
 
   const loadLatestFulfillment = useCallback(async (force = false) => {
+    if (!isLoggedIn()) return
+
     if (
       !force &&
       chatState !== 'sale_completed' &&
@@ -148,14 +149,23 @@ export function ChatbotPage() {
     }
   }, [])
 
+  useEffect(() => {
+    const resumeCheckout = (location.state as { resumeCheckout?: boolean } | null)?.resumeCheckout
+    if (resumeCheckout) {
+      setResumeCheckoutBanner(true)
+    }
+  }, [location.state])
+
+  const redirectToCheckoutLogin = useCallback(() => {
+    navigate(buildCheckoutLoginUrl())
+  }, [navigate])
+
   const checkHealth = useCallback(async () => {
     try {
       await fetchChatHealth()
       setHealthStatus('healthy')
-      setHealthBanner('')
-    } catch (err) {
+    } catch {
       setHealthStatus('unhealthy')
-      setHealthBanner(getHealthBannerMessage(err))
     }
   }, [])
 
@@ -247,6 +257,11 @@ export function ChatbotPage() {
     const normalizedText = text.trim()
     if (!normalizedText || !chatAvailable || !historyLoaded) return
 
+    if (messageRequiresCheckoutAuth(chatState, normalizedText)) {
+      redirectToCheckoutLogin()
+      return
+    }
+
     const isCancel = /cancelar|cancel/i.test(normalizedText)
     const isConfirm =
       /confirmar\s*compra|confirmo\s*(la\s*)?(compra|pedido)/i.test(normalizedText)
@@ -331,7 +346,15 @@ export function ChatbotPage() {
   const handleChipClick = (chip: string) => {
     if (!chatAvailable) return
     if (chip === 'Ver factura') {
+      if (!isLoggedIn()) {
+        navigate('/login?returnTo=/my-invoices')
+        return
+      }
       navigate(isAdmin() ? '/invoices' : '/my-invoices')
+      return
+    }
+    if (chip === 'Confirmar compra' && !isLoggedIn()) {
+      redirectToCheckoutLogin()
       return
     }
     void sendMessage(CHIP_INTENT_MESSAGES[chip] ?? chip)
@@ -356,34 +379,118 @@ export function ChatbotPage() {
     setTutorialMobileOpen(true)
   }
 
-  const clienteUser = !isAdmin()
+  const handleConfirmPurchase = () => {
+    if (!isLoggedIn()) {
+      redirectToCheckoutLogin()
+      return
+    }
+    void sendMessage('Confirmar compra')
+  }
+
+  const guestCheckoutLocked =
+    !isLoggedIn() &&
+    (chatState === 'awaiting_use_saved_address' ||
+      chatState === 'awaiting_delivery_address' ||
+      chatState === 'awaiting_save_address')
+
+  const droguiPresenceLabel =
+    healthStatus === 'healthy'
+      ? 'en línea'
+      : healthStatus === 'checking'
+        ? 'conectando…'
+        : 'sin conexión'
+
+  const droguiPresenceDotClass =
+    healthStatus === 'healthy'
+      ? 'bg-green-500'
+      : healthStatus === 'checking'
+        ? 'bg-amber-500 animate-pulse'
+        : 'bg-on-surface-variant/50'
 
   return (
     <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden lg:flex-row">
       <div
         role="tablist"
         aria-label="Vista del chatbot"
-        className="flex shrink-0 border-b border-outline-variant bg-surface lg:hidden"
+        className="flex shrink-0 items-stretch border-b border-outline-variant bg-surface lg:hidden"
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mobileView === 'chat'}
-          onClick={() => setMobileView('chat')}
-          className={`flex-1 py-md font-label-md text-label-md transition-colors ${
-            mobileView === 'chat'
-              ? 'border-b-2 border-primary font-bold text-primary'
-              : 'text-on-surface-variant'
+        <div
+          className={`flex min-w-0 flex-1 items-stretch ${
+            mobileView === 'chat' ? 'border-b-2 border-primary bg-surface-container-lowest/50' : ''
           }`}
         >
-          Chat
-        </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mobileView === 'chat'}
+            onClick={() => setMobileView('chat')}
+            className={`flex min-w-0 flex-1 items-center gap-sm px-md py-sm text-left transition-colors ${
+              mobileView === 'chat' ? 'text-primary' : 'text-on-surface-variant'
+            }`}
+          >
+            <span
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                mobileView === 'chat' ? 'bg-primary/15' : 'bg-surface-container'
+              }`}
+            >
+              <Icon
+                name="smart_toy"
+                size={20}
+                className={mobileView === 'chat' ? 'text-primary' : 'text-on-surface-variant'}
+              />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col items-start">
+              <span
+                className={`truncate font-label-md text-label-md ${
+                  mobileView === 'chat' ? 'font-bold text-primary' : 'text-on-surface'
+                }`}
+              >
+                Drogui
+              </span>
+              <span className="flex items-center gap-1 font-body-sm text-body-sm text-on-surface-variant">
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${droguiPresenceDotClass}`}
+                  aria-hidden
+                />
+                <span className="truncate">{droguiPresenceLabel}</span>
+              </span>
+            </span>
+          </button>
+
+          {mobileView === 'chat' && healthStatus === 'healthy' ? (
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="flex shrink-0 items-center self-center px-sm text-primary"
+              aria-label="Nueva conversación"
+              title="Nueva conversación"
+            >
+              <Icon name="add_comment" size={22} />
+            </button>
+          ) : null}
+
+          {mobileView === 'chat' && healthStatus === 'unhealthy' ? (
+            <button
+              type="button"
+              onClick={() => {
+                setHealthStatus('checking')
+                void checkHealth()
+              }}
+              className="flex shrink-0 items-center self-center px-sm text-error"
+              aria-label="Reintentar conexión"
+              title="Reintentar"
+            >
+              <Icon name="refresh" size={22} />
+            </button>
+          ) : null}
+        </div>
+
         <button
           type="button"
           role="tab"
           aria-selected={mobileView === 'summary'}
           onClick={() => setMobileView('summary')}
-          className={`flex-1 py-md font-label-md text-label-md transition-colors ${
+          className={`flex shrink-0 items-center justify-center border-l border-outline-variant px-lg py-sm font-label-md text-label-md transition-colors ${
             mobileView === 'summary'
               ? 'border-b-2 border-primary font-bold text-primary'
               : 'text-on-surface-variant'
@@ -398,81 +505,104 @@ export function ChatbotPage() {
           mobileView !== 'chat' ? 'hidden lg:flex' : ''
         }`}
       >
-        {healthStatus === 'healthy' && (
+        {resumeCheckoutBanner && (
           <div
             role="status"
-            className="z-20 flex shrink-0 items-center gap-sm border-b border-primary/20 bg-primary/5 px-lg py-sm font-body-sm text-body-sm text-on-surface-variant"
+            className="z-20 flex shrink-0 items-center gap-sm border-b border-primary/30 bg-primary-container/20 px-lg py-sm font-body-sm text-body-sm text-on-surface"
           >
-            <Icon name="smart_toy" size={18} className="shrink-0 text-primary" />
+            <Icon name="shopping_cart_checkout" size={18} className="shrink-0 text-primary" />
             <span className="flex-1">
-              Drogui está en línea — escribe en lenguaje natural o elige una opción del menú.
+              Sesión iniciada. Tu carrito sigue aquí — confirma la compra cuando estés listo.
             </span>
             <button
               type="button"
-              onClick={startNewConversation}
-              className="shrink-0 rounded border border-primary/30 px-sm py-xs font-label-md text-label-md text-primary transition-colors hover:bg-primary/10"
+              onClick={() => setResumeCheckoutBanner(false)}
+              className="shrink-0 rounded px-sm py-xs font-label-md text-label-md text-primary hover:bg-primary/10"
             >
-              Nueva conversación
+              Cerrar
             </button>
           </div>
         )}
 
-        {clienteUser ? (
-          <PageHelpCard
-            storageKey="chatbot-client-tip"
-            icon="shopping_cart"
-            title="¿Cómo comprar con Drogui?"
-            className="z-10 shrink-0 px-lg py-sm lg:hidden"
-            steps={[
-              <>Escribe lo que buscas, por ejemplo: «quiero 2 unidades de marihuana blue».</>,
-              <>Elige el producto si hay varias opciones y confirma la cantidad.</>,
-              <>Al terminar, revisa tu factura en <strong>Mis facturas</strong> o pídele «ver factura» al chat.</>,
-            ]}
-            tip={
-              <>
-                Toca el botón <strong>?</strong> abajo a la derecha para ver la guía completa con ejemplos de comandos.
-              </>
-            }
-          />
-        ) : null}
-
-        {healthStatus !== 'healthy' && (
+        {guestCheckoutLocked && (
           <div
             role="alert"
-            className={`z-20 flex shrink-0 items-center gap-sm border-b px-lg py-sm font-body-sm text-body-sm ${
-              healthStatus === 'checking'
-                ? 'border-outline-variant bg-surface-container text-on-surface-variant'
-                : 'border-error/30 bg-error/10 text-error'
-            }`}
+            className="z-20 flex shrink-0 items-center gap-sm border-b border-primary/30 bg-primary-container/20 px-lg py-sm font-body-sm text-body-sm text-on-surface"
           >
-            <Icon
-              name={healthStatus === 'checking' ? 'hourglass_empty' : 'warning'}
-              size={18}
-              className="shrink-0"
-            />
-            <span className="flex-1">
-              {healthStatus === 'checking'
-                ? 'Comprobando disponibilidad del chatbot…'
-                : healthBanner}
-            </span>
-            {healthStatus === 'unhealthy' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setHealthStatus('checking')
-                  void checkHealth()
-                }}
-                className="shrink-0 rounded border border-current px-sm py-xs font-label-md text-label-md transition-colors hover:bg-error/10"
-              >
-                Reintentar
-              </button>
-            )}
+            <Icon name="lock" size={18} className="shrink-0 text-primary" />
+            <span className="flex-1">{CHECKOUT_AUTH_MESSAGE}</span>
+            <button
+              type="button"
+              onClick={redirectToCheckoutLogin}
+              className="shrink-0 rounded border border-primary/40 px-sm py-xs font-label-md text-label-md text-primary transition-colors hover:bg-primary/10"
+            >
+              Iniciar sesión
+            </button>
           </div>
         )}
 
         <div
+          role="status"
+          aria-live="polite"
+          className="z-20 hidden shrink-0 items-center gap-sm border-b border-outline-variant bg-surface px-lg py-sm lg:flex"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15">
+            <Icon name="smart_toy" size={20} className="text-primary" />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col items-start">
+            <span className="truncate font-label-md text-label-md font-bold text-on-surface">
+              Drogui
+            </span>
+            <span className="flex items-center gap-1 font-body-sm text-body-sm text-on-surface-variant">
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${droguiPresenceDotClass}`}
+                aria-hidden
+              />
+              <span className="truncate">{droguiPresenceLabel}</span>
+            </span>
+          </span>
+
+          <button
+            type="button"
+            onClick={openTutorialDesktop}
+            className="flex shrink-0 items-center px-sm text-primary transition-colors hover:bg-primary/10"
+            aria-label="Abrir guía de compra"
+            title="Ayuda"
+          >
+            <Icon name="help" size={22} />
+          </button>
+
+          {healthStatus === 'healthy' ? (
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="flex shrink-0 items-center px-sm text-primary transition-colors hover:bg-primary/10"
+              aria-label="Nueva conversación"
+              title="Nueva conversación"
+            >
+              <Icon name="add_comment" size={22} />
+            </button>
+          ) : null}
+
+          {healthStatus === 'unhealthy' ? (
+            <button
+              type="button"
+              onClick={() => {
+                setHealthStatus('checking')
+                void checkHealth()
+              }}
+              className="flex shrink-0 items-center px-sm text-error transition-colors hover:bg-error/10"
+              aria-label="Reintentar conexión"
+              title="Reintentar"
+            >
+              <Icon name="refresh" size={22} />
+            </button>
+          ) : null}
+        </div>
+
+        <div
           ref={messagesContainerRef}
-          className="custom-scrollbar z-10 flex flex-1 flex-col gap-lg overflow-y-auto p-lg"
+          className="custom-scrollbar z-10 flex flex-1 flex-col gap-lg overflow-y-auto p-md pt-sm lg:p-lg"
         >
           {!historyLoaded && (
             <p className="text-center font-body-sm text-body-sm text-on-surface-variant">
@@ -496,6 +626,7 @@ export function ChatbotPage() {
           onChange={setInput}
           onSend={() => void sendMessage(input)}
           disabled={!chatAvailable || !historyLoaded}
+          onHelpClick={openTutorialMobile}
         />
       </section>
 
@@ -503,9 +634,7 @@ export function ChatbotPage() {
         className={mobileView !== 'chat' ? 'max-lg:hidden' : ''}
         desktopOpen={tutorialDesktopOpen}
         mobileOpen={tutorialMobileOpen}
-        onDesktopToggle={openTutorialDesktop}
         onDesktopClose={closeTutorialDesktop}
-        onMobileOpen={openTutorialMobile}
         onMobileClose={() => setTutorialMobileOpen(false)}
       />
 
@@ -517,7 +646,7 @@ export function ChatbotPage() {
         chatState={chatState}
         invoiceNumber={invoiceNumber}
         fulfillmentStatus={fulfillmentStatus}
-        onConfirm={() => void sendMessage('Confirmar compra')}
+        onConfirm={handleConfirmPurchase}
         onModify={() => void sendMessage('Quiero modificar el pedido.')}
         onCancel={() => void sendMessage('cancelar')}
       />

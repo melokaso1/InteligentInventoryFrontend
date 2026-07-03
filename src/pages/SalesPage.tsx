@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Sale } from '../types'
-import { getUserFacingApiError, type PagedResponse } from '../api/client'
-import { isCacheFresh, readCache } from '../api/cache'
+import { getUserFacingApiError } from '../api/client'
 import { createSaleInvoice, fetchSales, fetchSaleMetrics } from '../api'
 import { formatCOP } from '../utils/format'
 import { CreateManualSaleDrawer } from '../components/sales/CreateManualSaleDrawer'
@@ -44,45 +43,17 @@ function shortOrderId(id: string) {
   return id.slice(0, 8).toUpperCase()
 }
 
-function buildSalesListCacheKey(fromDate?: string, toDate?: string, origin?: string): string {
-  const search = new URLSearchParams()
-  if (fromDate) search.set('from', fromDate)
-  if (toDate) search.set('to', toDate)
-  if (origin) search.set('origin', origin)
-  search.set('pageSize', '50')
-  return `/api/sales?${search.toString()}`
-}
-
-function buildSalesMetricsCacheKey(fromDate?: string, toDate?: string, origin?: string): string {
-  const search = new URLSearchParams()
-  if (fromDate) search.set('from', fromDate)
-  if (toDate) search.set('to', toDate)
-  if (origin) search.set('origin', origin)
-  return `/api/sales/metrics?${search.toString()}`
-}
-
-const defaultSalesRange = getSalesDateRangeForPreset(DEFAULT_SALES_DATE_PRESET)
-const defaultSalesCacheKey = buildSalesListCacheKey(defaultSalesRange.fromDate, defaultSalesRange.toDate)
-const defaultMetricsCacheKey = buildSalesMetricsCacheKey(
-  defaultSalesRange.fromDate,
-  defaultSalesRange.toDate,
-)
-
 export function SalesPage() {
   const navigate = useNavigate()
   const { toastMessage, showToast, dismissToast } = useToast()
-  const [sales, setSales] = useState<Sale[]>(
-    () => readCache<PagedResponse<Sale>>(defaultSalesCacheKey)?.items ?? [],
-  )
+  const [sales, setSales] = useState<Sale[]>([])
   const [metrics, setMetrics] = useState({
-    totalSales: readCache<{ totalSales: number }>(defaultMetricsCacheKey)?.totalSales ?? 0,
-    totalRevenue: readCache<{ totalRevenue: number }>(defaultMetricsCacheKey)?.totalRevenue ?? 0,
-    chatbotSales: readCache<{ chatbotSales: number }>(defaultMetricsCacheKey)?.chatbotSales ?? 0,
-    manualSales: readCache<{ manualSales: number }>(defaultMetricsCacheKey)?.manualSales ?? 0,
+    totalSales: 0,
+    totalRevenue: 0,
+    chatbotSales: 0,
+    manualSales: 0,
   })
-  const [loading, setLoading] = useState(
-    () => !isCacheFresh(defaultSalesCacheKey) && !isCacheFresh(defaultMetricsCacheKey),
-  )
+  const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Sale | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [originFilter, setOriginFilter] = useState<'all' | 'manual' | 'chatbot'>('all')
@@ -124,12 +95,7 @@ export function SalesPage() {
 
     async function load() {
       if (isInitialLoad.current) {
-        const { fromDate, toDate } = dateRange
-        const origin = originFilter === 'all' ? undefined : originFilter
-        const hasCache =
-          isCacheFresh(buildSalesListCacheKey(fromDate, toDate, origin)) ||
-          isCacheFresh(buildSalesMetricsCacheKey(fromDate, toDate, origin))
-        if (!hasCache) setLoading(true)
+        setLoading(true)
       }
       try {
         if (!cancelled) await loadSales()
@@ -262,15 +228,15 @@ export function SalesPage() {
               <label className="mb-1 block font-label-md text-label-md text-on-surface-variant">
                 Origen
               </label>
-              <div className="flex min-h-[42px] overflow-hidden rounded-lg border border-outline bg-surface-container-lowest">
+              <div className="grid min-h-[42px] min-w-0 grid-cols-3 overflow-hidden rounded-lg border border-outline bg-surface-container-lowest">
                 {(['all', 'manual', 'chatbot'] as const).map((value) => (
                   <button
                     key={value}
                     type="button"
                     onClick={() => setOriginFilter(value)}
-                    className={`flex min-w-0 flex-1 items-center justify-center px-3 py-2.5 text-body-md ${
+                    className={`min-w-0 px-1 py-2.5 text-center text-body-sm font-medium whitespace-nowrap transition-colors sm:px-2 sm:text-body-md ${
                       originFilter === value
-                        ? 'bg-primary font-semibold text-on-primary'
+                        ? 'bg-primary text-on-primary'
                         : 'text-on-surface-variant hover:bg-primary/10'
                     }`}
                   >
@@ -341,6 +307,23 @@ export function SalesPage() {
             data={sales}
             getRowId={(row) => row.id}
             onRowClick={openDrawer}
+            renderMobileCard={(row) => (
+              <div className="flex w-full items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tertiary-container text-xs font-bold text-tertiary">
+                  {customerInitials(row.customer)}
+                </div>
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <p className="font-mono text-xs font-bold text-primary">#{shortOrderId(row.id)}</p>
+                  <p className="line-clamp-1 overflow-hidden font-body-md font-semibold text-on-surface">
+                    {row.customer}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end justify-center gap-1">
+                  <span className="whitespace-nowrap font-semibold">{formatCOP(row.total)}</span>
+                  <StatusBadge variant={row.status} />
+                </div>
+              </div>
+            )}
             columns={[
               {
                 key: 'id',

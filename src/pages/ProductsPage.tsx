@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Product } from '../types'
-import { ApiError, getUserFacingApiError, type PagedResponse } from '../api/client'
-import { isCacheFresh, readCache } from '../api/cache'
+import { ApiError, getUserFacingApiError, isAbortError } from '../api/client'
 import {
   createProduct,
   deleteProduct,
@@ -10,6 +9,7 @@ import {
   fetchProductCategories,
   fetchProducts,
   fetchProductStats,
+  getProductCategoriesCached,
   patchProductStatus,
   updateProduct,
 } from '../api'
@@ -18,16 +18,19 @@ import { Drawer } from '../components/ui/Drawer'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
 import {
+  buildVisiblePageNumbers,
   PaginationControls,
   PaginationFooter,
   PaginationIconButton,
   PaginationInfo,
   PaginationPageButton,
+  PaginationPages,
 } from '../components/ui/Pagination'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
+import { StatusBadge, type BadgeVariant } from '../components/ui/StatusBadge'
 import { formatCOP, saleUnitLabel } from '../utils/format'
-import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { formatSecondsSince, useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { notifyDataMutation } from '../utils/dataSync'
 
 const emptyProductForm = {
@@ -53,34 +56,63 @@ function productToForm(product: Product) {
 }
 
 const PAGE_SIZE = 15
-const DEFAULT_PRODUCTS_CACHE_KEY = `/api/products?page=1&pageSize=${PAGE_SIZE}`
 
-type ProductStatusFilter = '' | 'active' | 'inactive'
+type ProductStatusFilter = '' | 'active' | 'inactive' | 'out_of_stock'
+
+function buildProductListParams(
+  debouncedSearch: string,
+  categoryFilter: string,
+  statusFilter: ProductStatusFilter,
+  page: number,
+) {
+  return {
+    q: debouncedSearch || undefined,
+    category: categoryFilter || undefined,
+    status: statusFilter || undefined,
+    page,
+    pageSize: PAGE_SIZE,
+  }
+}
 
 const productStatusFilterOptions: { value: ProductStatusFilter; label: string }[] = [
   { value: '', label: 'Todos' },
   { value: 'active', label: 'Activos' },
+  { value: 'out_of_stock', label: 'Sin stock' },
   { value: 'inactive', label: 'Desactivados' },
 ]
 
 const filterSelectClassName =
-  'min-w-[10.5rem] w-full rounded-lg border border-outline bg-surface-container-low py-2.5 pl-3 pr-9 text-body-md focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none sm:w-auto'
+  'w-full min-w-0 rounded-lg border border-outline bg-surface-container-low py-2.5 pl-3 pr-9 text-body-md focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none'
+
+function productStatusBadge(status: Product['status']): BadgeVariant {
+  switch (status) {
+    case 'active':
+      return 'active'
+    case 'inactive':
+      return 'inactive'
+    case 'out_of_stock':
+      return 'out_of_stock'
+    case 'archived':
+      return 'archived'
+    default:
+      return 'inactive'
+  }
+}
+
+function canToggleCatalogStatus(status: Product['status']) {
+  return status === 'active' || status === 'inactive'
+}
 
 export function ProductsPage() {
   const navigate = useNavigate()
-  const [products, setProducts] = useState<Product[]>(
-    () => readCache<PagedResponse<Product>>(DEFAULT_PRODUCTS_CACHE_KEY)?.items ?? [],
-  )
+  const [products, setProducts] = useState<Product[]>([])
   const [stats, setStats] = useState({
-    totalProducts: readCache<{ totalProducts: number }>('/api/products/stats')?.totalProducts ?? 0,
-    activeProducts: readCache<{ activeProducts: number }>('/api/products/stats')?.activeProducts ?? 0,
-    outOfStockProducts: readCache<{ outOfStockProducts: number }>('/api/products/stats')?.outOfStockProducts ?? 0,
-    totalInventoryValue:
-      readCache<{ totalInventoryValue: number }>('/api/products/stats')?.totalInventoryValue ?? 0,
+    totalProducts: 0,
+    activeProducts: 0,
+    outOfStockProducts: 0,
+    totalInventoryValue: 0,
   })
-  const [loading, setLoading] = useState(
-    () => !isCacheFresh(DEFAULT_PRODUCTS_CACHE_KEY) && !isCacheFresh('/api/products/stats'),
-  )
+  const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [page, setPage] = useState(1)
@@ -88,7 +120,7 @@ export function ProductsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<ProductStatusFilter>('')
-  const [categories, setCategories] = useState<string[]>([])
+  const [categories, setCategories] = useState<string[]>(() => getProductCategoriesCached())
   const [selected, setSelected] = useState<Product | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [addDrawerOpen, setAddDrawerOpen] = useState(false)
@@ -119,15 +151,7 @@ export function ProductsPage() {
   }, [])
 
   const loadProducts = useCallback(async () => {
-    const result = await fetchProducts(
-      {
-        q: debouncedSearch || undefined,
-        category: categoryFilter || undefined,
-        status: statusFilter || undefined,
-        page,
-        pageSize: PAGE_SIZE,
-      },
-    )
+    const result = await fetchProducts(buildProductListParams(debouncedSearch, categoryFilter, statusFilter, page))
     setProducts(result.items)
     setTotalCount(result.totalCount)
   }, [debouncedSearch, categoryFilter, statusFilter, page])
@@ -140,7 +164,7 @@ export function ProductsPage() {
     }
   }, [loadSummary, loadProducts])
 
-  useRealtimeRefresh(refreshProductsData, [refreshProductsData], {
+  const { secondsSinceUpdate } = useRealtimeRefresh(refreshProductsData, [refreshProductsData], {
     scope: ['products', 'inventory', 'sales'],
   })
 
@@ -173,15 +197,14 @@ export function ProductsPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedSearch, categoryFilter, statusFilter])
+  }, [debouncedSearch])
 
   useEffect(() => {
     let cancelled = false
-    const controller = new AbortController()
 
     async function loadCategories() {
       try {
-        const result = await fetchProductCategories(controller.signal)
+        const result = await fetchProductCategories()
         if (!cancelled) setCategories(result)
       } catch {
         // Dropdown can stay empty if categories fail to load.
@@ -191,7 +214,6 @@ export function ProductsPage() {
     void loadCategories()
     return () => {
       cancelled = true
-      controller.abort()
     }
   }, [])
 
@@ -207,23 +229,21 @@ export function ProductsPage() {
     async function loadProducts() {
       if (!isInitialLoad.current) setRefreshing(true)
       setLoadError(null)
+      let aborted = false
 
       try {
         const result = await fetchProducts(
-          {
-            q: debouncedSearch || undefined,
-            category: categoryFilter || undefined,
-            status: statusFilter || undefined,
-            page,
-            pageSize: PAGE_SIZE,
-          },
+          buildProductListParams(debouncedSearch, categoryFilter, statusFilter, page),
           controller.signal,
         )
         if (requestId !== productsRequestId.current) return
         setProducts(result.items)
         setTotalCount(result.totalCount)
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
+        if (isAbortError(err)) {
+          aborted = true
+          return
+        }
         if (requestId !== productsRequestId.current) return
         if (err instanceof ApiError && err.status === 401) {
           navigate('/login', { replace: true })
@@ -231,7 +251,7 @@ export function ProductsPage() {
         }
         setLoadError(getUserFacingApiError(err, 'No se pudieron cargar los productos.'))
       } finally {
-        if (requestId !== productsRequestId.current) return
+        if (aborted || requestId !== productsRequestId.current) return
         if (isInitialLoad.current) {
           isInitialLoad.current = false
           setLoading(false)
@@ -250,6 +270,7 @@ export function ProductsPage() {
     stats.totalProducts > 0 ? Math.round(stats.totalInventoryValue / stats.totalProducts) : 0
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const visiblePages = buildVisiblePageNumbers(page, totalPages)
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
   const hasActiveFilters = Boolean(debouncedSearch || categoryFilter || statusFilter)
@@ -361,6 +382,7 @@ export function ProductsPage() {
         description: productForm.description.trim(),
       })
       await loadSummary()
+      setRetryCount((count) => count + 1)
       notifyDataMutation('products')
       setPage(1)
       setAddDrawerOpen(false)
@@ -373,19 +395,37 @@ export function ProductsPage() {
   }
 
   const handleToggleStatus = async (product: Product) => {
-    if (togglingStatusId) return
+    if (!canToggleCatalogStatus(product.status) || togglingStatusId === product.id) return
 
-    const nextStatus = product.status === 'active' ? 'inactive' : 'active'
+    const previousStatus = product.status
+    const nextStatus = previousStatus === 'active' ? 'inactive' : 'active'
+
     setTogglingStatusId(product.id)
+    setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, status: nextStatus } : p)))
+    if (selected?.id === product.id) {
+      setSelected({ ...selected, status: nextStatus })
+    }
+
     try {
       const updated = await patchProductStatus(product.id, nextStatus)
-      setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)))
+      if (statusFilter && updated.status !== statusFilter) {
+        setProducts((prev) => prev.filter((p) => p.id !== product.id))
+        setTotalCount((count) => Math.max(0, count - 1))
+      } else {
+        setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)))
+      }
       if (selected?.id === product.id) setSelected(updated)
       await loadSummary()
       notifyDataMutation('products')
       showToast(`Producto ${nextStatus === 'active' ? 'activado' : 'desactivado'}.`)
     } catch (err) {
-      setLoadError(getUserFacingApiError(err, 'No se pudo actualizar el estado del producto.'))
+      setProducts((prev) =>
+        prev.map((p) => (p.id === product.id ? { ...p, status: previousStatus } : p)),
+      )
+      if (selected?.id === product.id) {
+        setSelected({ ...selected, status: previousStatus })
+      }
+      showToast(getUserFacingApiError(err, 'No se pudo actualizar el estado del producto.'))
     } finally {
       setTogglingStatusId(null)
     }
@@ -423,15 +463,16 @@ export function ProductsPage() {
       value: stats.activeProducts.toLocaleString('es-CO'),
       change:
         stats.totalProducts > 0
-          ? `${Math.round((stats.activeProducts / stats.totalProducts) * 100)}%`
-          : '—',
+          ? // Active % over all SKUs (includes archived in totalProducts denominator).
+            `${Math.round((stats.activeProducts / stats.totalProducts) * 100)}% · ${formatSecondsSince(secondsSinceUpdate)}`
+          : formatSecondsSince(secondsSinceUpdate),
       icon: 'check_circle',
       tone: 'tertiary' as const,
     },
     {
       label: 'SIN STOCK',
       value: String(stats.outOfStockProducts),
-      change: stats.outOfStockProducts > 0 ? 'Alta prioridad' : 'OK',
+      change: stats.outOfStockProducts > 0 ? 'Alta prioridad' : formatSecondsSince(secondsSinceUpdate),
       icon: 'warning',
       tone: 'error' as const,
     },
@@ -531,8 +572,8 @@ export function ProductsPage() {
       </div>
 
       <div className="mb-xl flex min-w-0 max-w-full flex-col gap-md overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest p-md shadow-sm">
-        <div className="flex min-w-0 flex-col flex-wrap items-stretch gap-md sm:flex-row sm:items-end">
-          <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
+        <div className="flex min-w-0 flex-row flex-wrap items-end gap-md">
+          <div className="relative min-w-0 flex-[2] min-w-[140px] md:min-w-[180px]">
             <label htmlFor="products-search" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
               Buscar
             </label>
@@ -550,14 +591,17 @@ export function ProductsPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <div className="min-w-0 sm:w-auto">
+          <div className="min-w-0 flex-1 min-w-[140px] md:min-w-[180px]">
             <label htmlFor="products-category-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
               Categoría
             </label>
             <Select
               id="products-category-filter"
               value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
+              onChange={(e) => {
+                setCategoryFilter(e.target.value)
+                setPage(1)
+              }}
               className={filterSelectClassName}
             >
               <option value="">Todas las categorías</option>
@@ -568,14 +612,17 @@ export function ProductsPage() {
               ))}
             </Select>
           </div>
-          <div className="min-w-0 sm:w-auto">
+          <div className="min-w-0 flex-1 min-w-[140px] md:min-w-[180px]">
             <label htmlFor="products-status-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
               Estado
             </label>
             <Select
               id="products-status-filter"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as ProductStatusFilter)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value as ProductStatusFilter)
+                setPage(1)
+              }}
               className={filterSelectClassName}
             >
               {productStatusFilterOptions.map((option) => (
@@ -595,9 +642,73 @@ export function ProductsPage() {
         ) : null}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
-        <div className={`min-w-0 max-w-full overflow-x-auto ${refreshing ? 'opacity-60' : ''}`}>
-          <table className="w-full min-w-[640px] text-left border-collapse">
+      <div className="flex min-w-0 flex-1 flex-col gap-md">
+        <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
+          <div className={`divide-y divide-outline-variant/40 md:hidden ${refreshing ? 'opacity-60' : ''}`}>
+            {products.length === 0 ? (
+              <p className="px-gutter py-8 text-center text-on-surface-variant">
+                {hasActiveFilters
+                  ? 'No se encontraron productos con los filtros actuales.'
+                  : 'No hay productos registrados.'}
+              </p>
+            ) : (
+              products.map((product) => (
+                <article
+                  key={product.id}
+                  onClick={() => openDrawer(product)}
+                  className="flex h-[7.25rem] min-h-[7.25rem] max-h-[7.25rem] cursor-pointer items-center gap-3 px-gutter py-3 transition-colors hover:bg-primary/5"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-outline-variant bg-surface-container">
+                    <Icon name={product.icon} size={22} className="text-on-surface-variant" />
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 overflow-hidden">
+                    <p className="line-clamp-2 h-[2.5rem] overflow-hidden font-bold leading-snug text-on-surface text-body-md">
+                      {product.name}
+                    </p>
+                    <p className="truncate font-mono text-xs text-on-surface-variant">{product.code}</p>
+                  </div>
+                  <div
+                    className="flex shrink-0 flex-col items-end justify-center gap-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="text-right">
+                      <p className="whitespace-nowrap font-bold text-on-surface">{formatCOP(product.price)}</p>
+                      <p className="whitespace-nowrap text-xs text-on-surface-variant">
+                        por {saleUnitLabel(product.saleUnit)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge variant={productStatusBadge(product.status)} />
+                      {canToggleCatalogStatus(product.status) ? (
+                        <label
+                          className={`relative inline-flex items-center ${
+                            togglingStatusId === product.id ? 'cursor-wait opacity-60' : 'cursor-pointer'
+                          }`}
+                          title={
+                            product.status === 'active'
+                              ? 'Desactivar en catálogo'
+                              : 'Activar en catálogo'
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={product.status === 'active'}
+                            disabled={togglingStatusId === product.id}
+                            onChange={() => void handleToggleStatus(product)}
+                          />
+                          <div className="h-6 w-11 rounded-full bg-secondary-fixed-dim after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-full peer-disabled:opacity-60 after:content-['']" />
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+
+          <div className={`hidden min-w-0 max-w-full overflow-x-auto md:block ${refreshing ? 'opacity-60' : ''}`}>
+            <table className="w-full min-w-[640px] text-left border-collapse">
             <thead>
               <tr className="bg-surface-container-high border-b border-outline-variant">
                 <th className="py-4 px-gutter font-label-md text-label-md text-on-surface-variant">PRODUCTO</th>
@@ -663,18 +774,36 @@ export function ProductsPage() {
                       </p>
                     </td>
                     <td className="py-3 px-gutter" onClick={(e) => e.stopPropagation()}>
-                      <label
-                        className={`relative inline-flex items-center ${togglingStatusId === product.id ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="sr-only peer"
-                          checked={product.status === 'active'}
-                          disabled={togglingStatusId === product.id}
-                          onChange={() => void handleToggleStatus(product)}
-                        />
-                        <div className="w-11 h-6 bg-secondary-fixed-dim rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary peer-disabled:opacity-60" />
-                      </label>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <StatusBadge variant={productStatusBadge(product.status)} />
+                        {canToggleCatalogStatus(product.status) ? (
+                          <label
+                            className={`relative inline-flex items-center ${
+                              togglingStatusId === product.id ? 'cursor-wait opacity-60' : 'cursor-pointer'
+                            }`}
+                            title={
+                              product.status === 'active'
+                                ? 'Desactivar en catálogo'
+                                : 'Activar en catálogo'
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              className="sr-only peer"
+                              checked={product.status === 'active'}
+                              disabled={togglingStatusId === product.id}
+                              onChange={() => void handleToggleStatus(product)}
+                            />
+                            <div className="h-6 w-11 rounded-full bg-secondary-fixed-dim after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-full peer-disabled:opacity-60 after:content-['']" />
+                          </label>
+                        ) : (
+                          <span className="text-[11px] text-on-surface-variant">
+                            {product.status === 'out_of_stock'
+                              ? 'Reposición en Inventario'
+                              : 'Sin cambio de catálogo'}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td
                       className="hidden py-3 px-gutter text-right sm:table-cell"
@@ -725,42 +854,73 @@ export function ProductsPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
-        <PaginationFooter className="p-md">
-          <PaginationInfo>
-            {totalCount === 0 ? (
-              'Sin resultados'
-            ) : (
-              <>
-                Mostrando{' '}
-                <span className="font-bold">
-                  {rangeStart.toLocaleString('es-CO')} a {rangeEnd.toLocaleString('es-CO')}
-                </span>{' '}
-                de {totalCount.toLocaleString('es-CO')} registros
-              </>
-            )}
-          </PaginationInfo>
-          <PaginationControls>
-            <PaginationIconButton
-              icon="chevron_left"
-              disabled={page <= 1}
-              className="disabled:opacity-30"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            />
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNumber) => (
-              <PaginationPageButton key={pageNumber} active={pageNumber === page} onClick={() => setPage(pageNumber)}>
-                {pageNumber}
-              </PaginationPageButton>
-            ))}
-            <PaginationIconButton
-              icon="chevron_right"
-              disabled={page >= totalPages || totalPages === 0}
-              className="disabled:opacity-30"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            />
-          </PaginationControls>
-        </PaginationFooter>
+        <div className="shrink-0 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
+          <PaginationFooter className="border-t-0 p-md">
+            <PaginationInfo>
+              {totalCount === 0 ? (
+                'Sin resultados'
+              ) : (
+                <>
+                  Mostrando{' '}
+                  <span className="font-bold">
+                    {rangeStart.toLocaleString('es-CO')} a {rangeEnd.toLocaleString('es-CO')}
+                  </span>{' '}
+                  de {totalCount.toLocaleString('es-CO')} registros
+                </>
+              )}
+            </PaginationInfo>
+            <PaginationControls>
+              <PaginationIconButton
+                icon="chevron_left"
+                disabled={page <= 1 || refreshing}
+                className="disabled:opacity-30"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              />
+              <PaginationPages>
+                {visiblePages.length > 0 && visiblePages[0] > 1 ? (
+                  <>
+                    <PaginationPageButton onClick={() => setPage(1)}>1</PaginationPageButton>
+                    {visiblePages[0] > 2 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+                {visiblePages.map((pageNumber) => (
+                  <PaginationPageButton
+                    key={pageNumber}
+                    active={pageNumber === page}
+                    onClick={() => setPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </PaginationPageButton>
+                ))}
+                {visiblePages.length > 0 && visiblePages[visiblePages.length - 1] < totalPages ? (
+                  <>
+                    {visiblePages[visiblePages.length - 1] < totalPages - 1 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                    <PaginationPageButton onClick={() => setPage(totalPages)}>
+                      {totalPages}
+                    </PaginationPageButton>
+                  </>
+                ) : null}
+              </PaginationPages>
+              <PaginationIconButton
+                icon="chevron_right"
+                disabled={page >= totalPages || totalPages === 0 || refreshing}
+                className="disabled:opacity-30"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              />
+            </PaginationControls>
+          </PaginationFooter>
+        </div>
       </div>
 
       <Drawer

@@ -3,6 +3,19 @@ const API_BASE = import.meta.env.VITE_API_URL ?? ''
 import { getToken } from '../hooks/useAuth'
 import { normalizeJson } from './normalize'
 
+/** Sent on every API request so ngrok tunnels skip the browser interstitial. */
+export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning'
+
+export function shouldSendNgrokSkipHeader(): boolean {
+  if (API_BASE.includes('ngrok')) return true
+  if (typeof window !== 'undefined' && window.location.hostname.includes('ngrok')) return true
+  return false
+}
+
+export function ngrokSkipHeaders(): Record<string, string> {
+  return shouldSendNgrokSkipHeader() ? { [NGROK_SKIP_BROWSER_WARNING_HEADER]: 'true' } : {}
+}
+
 const FALLBACK_ERROR_MESSAGE = 'Ocurrió un error inesperado.'
 
 export const API_CONNECTION_ERROR_MESSAGE =
@@ -48,7 +61,13 @@ function mapStatusToUserMessage(status: number, context: ApiErrorContext = 'defa
   return FALLBACK_ERROR_MESSAGE
 }
 
+export function isAbortError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') return false
+  return (err as { name?: string }).name === 'AbortError'
+}
+
 export function logApiError(context: string, err: unknown): void {
+  if (isAbortError(err)) return
   console.error(`[API] ${context}`, err)
 }
 
@@ -130,10 +149,7 @@ export class ApiError extends Error {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-  }
-
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('ngrok-free.dev')) {
-    headers['ngrok-skip-browser-warning'] = 'true'
+    ...ngrokSkipHeaders(),
   }
 
   const token = getToken()
@@ -151,6 +167,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       },
     })
   } catch (err) {
+    if (isAbortError(err)) throw err
     logApiError(`fetch ${path}`, err)
     throw new ApiError(API_CONNECTION_ERROR_MESSAGE, 0)
   }

@@ -249,10 +249,16 @@ body {
   word-break: break-word;
 }
 
+.invoice-preview-col-qty {
+  width: 4.5rem;
+}
+
+.invoice-preview-col-price {
+  width: 7rem;
+}
+
 .invoice-preview-line-items {
-  max-height: min(45vh, 28rem);
   overflow-x: auto;
-  overflow-y: auto;
 }
 
 .dark .invoice-preview-canvas {

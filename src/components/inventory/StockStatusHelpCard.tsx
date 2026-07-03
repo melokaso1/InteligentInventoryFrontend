@@ -3,6 +3,12 @@ import { Icon } from '../ui/Icon'
 
 const stockLevels = [
   {
+    key: 'out_of_stock',
+    label: 'SIN STOCK',
+    threshold: '0 uds.',
+    badgeClass: 'bg-error/10 text-error border border-error/20',
+  },
+  {
     key: 'critical',
     label: 'CRÍTICO',
     threshold: '≤10%',
@@ -30,7 +36,7 @@ const stockLevels = [
 ] as const
 
 export function StockStatusHelpCard() {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
 
   return (
     <div className="border-b border-outline-variant px-md pb-md pt-md">
@@ -57,14 +63,14 @@ export function StockStatusHelpCard() {
           <div className="mt-md space-y-md border-t border-outline-variant/40 pt-md">
             <p className="text-sm leading-relaxed text-on-surface-variant">
               Indica el nivel de stock según el porcentaje respecto a la capacidad máxima del
-              producto.
+              producto. Los productos sin unidades disponibles se consideran sin stock.
             </p>
 
             <div className="flex flex-wrap gap-2">
               {stockLevels.map((level) => (
                 <span
                   key={level.key}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-tighter ${level.badgeClass}`}
+                  className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-tighter ${level.badgeClass}`}
                 >
                   {level.label}
                   <span className="font-normal normal-case tracking-normal opacity-90">

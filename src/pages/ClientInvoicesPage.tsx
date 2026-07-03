@@ -8,6 +8,7 @@ import { StatusBadge } from '../components/ui/StatusBadge'
 import { Toast } from '../components/ui/Toast'
 import { useToast } from '../hooks/useToast'
 import { formatCOP, formatDate } from '../utils/format'
+import { notifyDataMutation } from '../utils/dataSync'
 
 export function ClientInvoicesPage() {
   const { toastMessage, showToast, dismissToast } = useToast()
@@ -59,6 +60,8 @@ export function ClientInvoicesPage() {
 
     await payMyInvoice(selectedInvoice.id, paymentMethod)
     await loadInvoices()
+    notifyDataMutation('notifications')
+    notifyDataMutation('orders')
     closePayModal()
     showToast('Pago registrado. La factura ahora aparece como pagada.')
   }

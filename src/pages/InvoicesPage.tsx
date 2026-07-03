@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { Invoice } from '../types'
 import { fetchInvoicePdf, fetchInvoices, fetchInvoiceStats, payInvoice } from '../api'
 import { getUserFacingApiError } from '../api/client'
@@ -19,6 +20,7 @@ import { useToast } from '../hooks/useToast'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { useOverlayLock } from '../hooks/useOverlayLock'
 import { notifyDataMutation } from '../utils/dataSync'
+import { releaseOverlayFocus } from '../utils/a11y'
 
 const keyStatLabels = new Set(['Cuentas por cobrar', 'Importe vencido'])
 
@@ -162,10 +164,10 @@ function InvoicePreviewPanel({
           <Icon name="close" />
         </button>
       </div>
-      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-md md:p-lg">
+      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-md pb-lg md:p-lg md:pb-xl">
         <div
           ref={previewRef}
-          className="invoice-preview-canvas rounded-xl border border-outline-variant p-md pb-md shadow-sm md:p-lg md:pb-lg"
+          className="invoice-preview-canvas rounded-xl border border-outline-variant p-md pb-lg shadow-sm md:p-lg md:pb-lg"
         >
           <div className="mb-lg flex min-w-0 items-start justify-between gap-md border-b border-outline-variant pb-md md:mb-xl">
             <div className="min-w-0 flex-1">
@@ -175,6 +177,12 @@ function InvoicePreviewPanel({
                 <br />
                 Málaga, 29001
               </p>
+              {(selected.deliveryAddress || selected.deliveryCity) && (
+                <p className="mt-sm text-body-sm text-on-surface">
+                  <span className="font-semibold text-on-surface-variant">Entrega:</span>{' '}
+                  {[selected.deliveryAddress, selected.deliveryCity].filter(Boolean).join(', ')}
+                </p>
+              )}
               <p className="mt-sm text-body-sm text-on-surface-variant">
                 Emisión: {formatDate(selected.date)}
                 <br />
@@ -186,27 +194,31 @@ function InvoicePreviewPanel({
               <p className="font-mono-sm font-bold text-on-surface">{selected.id.slice(0, 8).toUpperCase()}</p>
             </div>
           </div>
-          <div className="invoice-preview-line-items mb-lg">
-            <table className="w-full min-w-0 text-body-sm">
+          <div className="invoice-preview-line-items mb-lg min-w-0">
+            <table className="w-full min-w-0 table-fixed text-body-sm">
               <thead>
                 <tr className="border-b border-outline-variant text-on-surface-variant">
-                  <th className="w-[50%] py-2 text-left">Descripción</th>
-                  <th className="w-[20%] py-2 text-center">Cant.</th>
-                  <th className="w-[30%] py-2 text-right">Precio</th>
+                  <th className="py-2 text-left">Descripción</th>
+                  <th className="invoice-preview-col-qty py-2 text-center">Cant.</th>
+                  <th className="invoice-preview-col-price py-2 text-right">Precio</th>
                 </tr>
               </thead>
               <tbody>
                 {selected.lineItems.map((item, i) => (
                   <tr key={i} className="border-b border-outline-variant/30">
-                    <td className="py-2 text-on-surface">{item.description}</td>
-                    <td className="py-2 text-center">{item.quantity}</td>
-                    <td className="whitespace-nowrap py-2 text-right font-mono-sm">{formatCOP(item.unitPrice)}</td>
+                    <td className="min-w-0 py-2 pr-2 text-on-surface">
+                      <span className="line-clamp-2 break-words">{item.description}</span>
+                    </td>
+                    <td className="invoice-preview-col-qty py-2 text-center tabular-nums">{item.quantity}</td>
+                    <td className="invoice-preview-col-price whitespace-nowrap py-2 text-right font-mono-sm tabular-nums">
+                      {formatCOP(item.unitPrice)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="space-y-sm border-t border-outline-variant pt-md pb-sm text-body-sm">
+          <div className="space-y-sm border-t border-outline-variant pt-md pb-lg text-body-sm">
             <div className="flex justify-between gap-md text-on-surface">
               <span>Subtotal</span>
               <span className="shrink-0 font-mono-sm">{formatCOP(selected.subtotal)}</span>
@@ -274,6 +286,7 @@ function InvoicePreviewPanel({
 }
 
 export function InvoicesPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { toastMessage, showToast, dismissToast } = useToast()
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [totalCount, setTotalCount] = useState(0)
@@ -322,6 +335,24 @@ export function InvoicesPage() {
   }, [reloadInvoices])
 
   useRealtimeRefresh(reloadInvoices, [reloadInvoices], { scope: ['invoices', 'sales'] })
+
+  const saleIdFromUrl = searchParams.get('saleId')
+  const invoiceIdFromUrl = searchParams.get('invoiceId')
+
+  useEffect(() => {
+    if (invoices.length === 0) return
+
+    const match = invoiceIdFromUrl
+      ? invoices.find((inv) => inv.id === invoiceIdFromUrl)
+      : saleIdFromUrl
+        ? invoices.find((inv) => inv.saleId === saleIdFromUrl)
+        : undefined
+
+    if (!match) return
+    setSelectedId(match.id)
+    setPreviewOpen(true)
+    setSearchParams({}, { replace: true })
+  }, [invoiceIdFromUrl, saleIdFromUrl, invoices, setSearchParams])
 
   useOverlayLock(previewOpen, 'invoice-preview')
 
@@ -414,6 +445,7 @@ export function InvoicesPage() {
   }
 
   const handleClosePreview = () => {
+    releaseOverlayFocus()
     setPreviewOpen(false)
   }
 
@@ -439,6 +471,7 @@ export function InvoicesPage() {
       notifyDataMutation('dashboard')
       notifyDataMutation('orders')
       notifyDataMutation('inventory')
+      notifyDataMutation('notifications')
       closePayModal()
       showToast('Factura marcada como pagada. El pedido pasará a preparación en Despacho.')
     } finally {

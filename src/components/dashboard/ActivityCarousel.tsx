@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../ui/Icon'
 import type { ActivityItem } from '../../types'
 import { formatRelativeTime } from '../../utils/format'
+import { padToPageSize } from '../../utils/paginatedGrid'
 
 type ActivityCategory = 'all' | 'sale' | 'invoice' | 'stock'
 
@@ -36,6 +37,25 @@ interface ActivityCarouselProps {
   maxItems?: number
 }
 
+function ActivityCardPlaceholder() {
+  return (
+    <article
+      aria-hidden
+      data-activity-card
+      className="invisible pointer-events-none flex h-[9rem] min-h-[9rem] max-h-[9rem] w-full shrink-0 snap-start flex-col rounded-xl border border-outline-variant bg-surface-container-low p-md sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]"
+    >
+      <div className="flex min-h-0 flex-1 items-start gap-sm overflow-hidden">
+        <div className="h-9 w-9 shrink-0 rounded-lg" />
+        <div className="min-w-0 flex-1">
+          <div className="h-[2.5rem] w-3/4" />
+          <div className="mt-xs h-[2.5rem]" />
+        </div>
+      </div>
+      <div className="mt-md h-3 w-1/4 shrink-0" />
+    </article>
+  )
+}
+
 export function ActivityCarousel({ items, maxItems = 8 }: ActivityCarouselProps) {
   const [activeTab, setActiveTab] = useState<ActivityCategory>('all')
   const [activePage, setActivePage] = useState(0)
@@ -50,6 +70,11 @@ export function ActivityCarousel({ items, maxItems = 8 }: ActivityCarouselProps)
   }, [limitedItems, activeTab])
 
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / cardsPerPage))
+
+  const paddedItems = useMemo(() => {
+    const slotCount = Math.max(cardsPerPage, pageCount * cardsPerPage)
+    return padToPageSize(filteredItems, slotCount)
+  }, [filteredItems, cardsPerPage, pageCount])
 
   useEffect(() => {
     setActivePage(0)
@@ -100,7 +125,7 @@ export function ActivityCarousel({ items, maxItems = 8 }: ActivityCarouselProps)
   }, [cardsPerPage, pageCount, filteredItems.length])
 
   return (
-    <section className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
+    <section className="min-w-0 w-full max-w-full overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
       <div className="flex flex-col gap-md border-b border-outline-variant bg-surface-container-low px-lg py-md sm:flex-row sm:items-center sm:justify-between">
         <h3 className="font-headline-sm text-headline-sm">Actividad reciente</h3>
         <div className="flex flex-wrap gap-xs">
@@ -121,43 +146,51 @@ export function ActivityCarousel({ items, maxItems = 8 }: ActivityCarouselProps)
         </div>
       </div>
 
-      <div className="relative p-lg">
+      <div className="relative flex min-w-0 w-full max-w-full flex-col p-lg">
         {filteredItems.length === 0 ? (
           <p className="py-xl text-center text-on-surface-variant">Sin actividad en esta categoría</p>
         ) : (
           <>
             <div
               ref={scrollRef}
-              className="custom-scrollbar flex snap-x snap-mandatory gap-md overflow-x-auto scroll-smooth pb-sm"
+              className="custom-scrollbar flex min-h-[9rem] min-w-0 w-full max-w-full flex-1 snap-x snap-mandatory gap-md overflow-x-auto scroll-smooth pb-sm"
             >
-              {filteredItems.map((item) => {
+              {paddedItems.map((item, index) => {
+                if (!item) {
+                  return <ActivityCardPlaceholder key={`activity-placeholder-${index}`} />
+                }
+
                 const category = getActivityCategory(item)
                 const accent = getActivityAccent(category)
                 return (
                   <article
                     key={item.id}
                     data-activity-card
-                    className="w-[min(100%,280px)] shrink-0 snap-start rounded-xl border border-outline-variant bg-surface-container-low p-md transition-shadow hover:shadow-md sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]"
+                    className="flex h-[9rem] min-h-[9rem] max-h-[9rem] w-full shrink-0 snap-start flex-col rounded-xl border border-outline-variant bg-surface-container-low p-md transition-shadow hover:shadow-md sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]"
                   >
-                    <div className="flex items-start gap-sm">
-                      <div className={`rounded-lg p-sm ${accent}`}>
+                    <div className="flex min-h-0 flex-1 items-start gap-sm overflow-hidden">
+                      <div className={`shrink-0 rounded-lg p-sm ${accent}`}>
                         <Icon name={getActivityIcon(category)} size={20} />
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-body-md font-bold text-on-surface">{item.title}</p>
-                        <p className="mt-xs line-clamp-2 text-body-sm text-on-surface-variant">
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <p className="line-clamp-2 h-[2.5rem] overflow-hidden font-body-md font-bold leading-snug text-on-surface">
+                          {item.title}
+                        </p>
+                        <p className="mt-xs line-clamp-2 h-[2.5rem] overflow-hidden text-body-sm leading-snug text-on-surface-variant">
                           {item.description}
                         </p>
                       </div>
                     </div>
-                    <p className="mt-md text-xs text-on-surface-variant">{formatRelativeTime(item.time)}</p>
+                    <p className="mt-md shrink-0 truncate text-xs text-on-surface-variant">
+                      {formatRelativeTime(item.time)}
+                    </p>
                   </article>
                 )
               })}
             </div>
 
             {pageCount > 1 && (
-              <div className="mt-md flex items-center justify-between">
+              <div className="mt-md flex min-w-0 w-full max-w-full items-center justify-between">
                 <div className="flex gap-xs">
                   {Array.from({ length: pageCount }, (_, i) => (
                     <button

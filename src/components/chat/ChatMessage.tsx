@@ -101,8 +101,8 @@ export function ChatMessage({
   }
 
   return (
-    <div className="flex max-w-[85%] gap-md">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container-highest">
+    <div className="flex max-w-[85%] gap-md max-lg:max-w-full max-lg:gap-0">
+      <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container-highest">
         <Icon name="smart_toy" filled size={16} className="text-primary" />
       </div>
       <div className="flex max-w-full flex-col gap-sm">
@@ -145,8 +145,8 @@ export function ChatMessage({
 
 export function TypingIndicator() {
   return (
-    <div className="flex max-w-[85%] gap-md opacity-80">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container-highest">
+    <div className="flex max-w-[85%] gap-md opacity-80 max-lg:max-w-full max-lg:gap-0">
+      <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded border border-outline-variant bg-surface-container-highest">
         <Icon name="smart_toy" filled size={16} className="text-primary" />
       </div>
       <div className="flex items-center gap-1 rounded-xl rounded-bl-[2px] border border-outline-variant bg-surface-container-low px-md py-sm">

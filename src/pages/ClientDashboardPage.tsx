@@ -49,7 +49,7 @@ export function ClientDashboardPage() {
   })
 
   return (
-    <div className="min-w-0 space-y-gutter">
+    <div className="min-w-0 w-full max-w-full space-y-gutter">
       <div className="rounded-xl border border-outline-variant bg-surface p-md shadow-sm md:p-gutter">
         <h1 className="text-headline-sm font-bold text-on-background md:font-display-lg md:text-display-lg">
           Hola, {userName}

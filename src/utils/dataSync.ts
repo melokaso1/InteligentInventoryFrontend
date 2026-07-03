@@ -1,4 +1,4 @@
-import { invalidateApiCacheForMutation } from '../api/cache'
+import { invalidateProductPersisted } from './persistedCache'
 
 export type DataMutationScope = 'all' | 'inventory' | 'sales' | 'invoices' | 'products' | 'dashboard' | 'orders' | 'notifications'
 
@@ -23,7 +23,10 @@ export function notifyDataMutation(scope: DataMutationScope = 'all'): void {
   const payload: DataMutationMessage = { type: EVENT_NAME, scope, at: Date.now() }
   getChannel()?.postMessage(payload)
   window.dispatchEvent(new CustomEvent<DataMutationMessage>(EVENT_NAME, { detail: payload }))
-  invalidateApiCacheForMutation(scope)
+
+  if (scope === 'all' || scope === 'products') {
+    invalidateProductPersisted()
+  }
 }
 
 export function subscribeDataMutations(

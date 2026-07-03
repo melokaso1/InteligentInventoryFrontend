@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Icon } from './Icon'
 
-const STORAGE_PREFIX = 'plonsazo-help-'
+const STORAGE_PREFIX = 'plonsazo-help-v2-'
 
-function readExpanded(storageKey: string, defaultExpanded = true): boolean {
+function readExpanded(storageKey: string, defaultExpanded = false): boolean {
   if (typeof window === 'undefined') return defaultExpanded
   try {
     const stored = localStorage.getItem(`${STORAGE_PREFIX}${storageKey}`)
@@ -41,7 +41,7 @@ export function PageHelpCard({
   intro,
   steps,
   tip,
-  defaultExpanded = true,
+  defaultExpanded = false,
   className = '',
 }: PageHelpCardProps) {
   const [expanded, setExpanded] = useState(() => readExpanded(storageKey, defaultExpanded))

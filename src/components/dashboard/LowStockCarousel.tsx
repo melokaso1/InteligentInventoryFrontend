@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from '../ui/Icon'
 import type { LowStockItem } from '../../types'
+import { padToPageSize } from '../../utils/paginatedGrid'
 
-const ITEMS_PER_PAGE = 10
+const ITEMS_PER_PAGE = 9
 
 const STATUS_ORDER: Record<LowStockItem['status'], number> = {
   out_of_stock: 0,
@@ -38,6 +39,28 @@ function statusLabel(status: string) {
   return { text: 'ADVERTENCIA', className: 'bg-primary/10 text-primary' }
 }
 
+function LowStockCardPlaceholder() {
+  return (
+    <article
+      aria-hidden
+      className="invisible pointer-events-none flex h-[10.5rem] min-h-[10.5rem] max-h-[10.5rem] flex-col rounded-xl border border-outline-variant bg-surface-container-low p-md"
+    >
+      <div className="flex items-start justify-between gap-sm">
+        <div className="min-w-0 flex-1">
+          <div className="h-5" />
+          <div className="mt-xs h-3 w-2/3" />
+        </div>
+        <span className="h-5 w-14 shrink-0 rounded" />
+      </div>
+      <div className="mt-md flex items-center gap-sm">
+        <div className="h-1.5 flex-1 rounded-full" />
+        <span className="h-4 w-12 shrink-0" />
+      </div>
+      <div className="mt-md h-9 w-full rounded-lg" />
+    </article>
+  )
+}
+
 interface LowStockCarouselProps {
   items: LowStockItem[]
 }
@@ -58,6 +81,11 @@ export function LowStockCarousel({ items }: LowStockCarouselProps) {
     return sortedItems.slice(start, start + ITEMS_PER_PAGE)
   }, [sortedItems, activePage])
 
+  const paddedPageItems = useMemo(
+    () => padToPageSize(pageItems, ITEMS_PER_PAGE),
+    [pageItems],
+  )
+
   const rangeStart = sortedItems.length === 0 ? 0 : activePage * ITEMS_PER_PAGE + 1
   const rangeEnd = Math.min((activePage + 1) * ITEMS_PER_PAGE, sortedItems.length)
 
@@ -66,20 +94,26 @@ export function LowStockCarousel({ items }: LowStockCarouselProps) {
   }
 
   return (
-    <div className="p-lg">
-      <div className="grid grid-cols-1 gap-md sm:grid-cols-2 xl:grid-cols-3">
-        {pageItems.map((item) => {
+    <div className="flex min-w-0 w-full max-w-full flex-col p-lg">
+      <div className="grid min-w-0 w-full max-w-full flex-1 grid-cols-1 gap-md sm:grid-cols-2 xl:grid-cols-3">
+        {paddedPageItems.map((item, index) => {
+          if (!item) {
+            return <LowStockCardPlaceholder key={`placeholder-${index}`} />
+          }
+
           const status = statusLabel(item.status)
           const barPct = stockBarWidth(item.currentStock, item.reorderLevel)
           return (
             <article
               key={item.id}
-              className="flex flex-col rounded-xl border border-outline-variant bg-surface-container-low p-md transition-colors hover:border-primary/30"
+              className="flex h-[10.5rem] min-h-[10.5rem] max-h-[10.5rem] flex-col rounded-xl border border-outline-variant bg-surface-container-low p-md transition-colors hover:border-primary/30"
             >
               <div className="flex items-start justify-between gap-sm">
-                <div className="min-w-0">
-                  <h4 className="truncate font-body-md font-bold text-on-surface">{item.name}</h4>
-                  <p className="mt-xs font-mono text-xs text-on-surface-variant">{item.sku}</p>
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <h4 className="line-clamp-2 h-[2.5rem] overflow-hidden font-body-md font-bold leading-snug text-on-surface">
+                    {item.name}
+                  </h4>
+                  <p className="truncate font-mono text-xs text-on-surface-variant">{item.sku}</p>
                 </div>
                 <span className={`shrink-0 rounded px-sm py-xs text-[11px] font-bold ${status.className}`}>
                   {status.text}
@@ -112,7 +146,7 @@ export function LowStockCarousel({ items }: LowStockCarouselProps) {
         })}
       </div>
 
-      <div className="mt-md flex flex-col gap-md sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-md flex min-w-0 w-full max-w-full flex-col gap-md sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body-sm text-on-surface-variant">
           Mostrando {rangeStart}-{rangeEnd} de {sortedItems.length}
         </p>

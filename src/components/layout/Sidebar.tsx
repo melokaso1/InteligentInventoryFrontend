@@ -1,16 +1,19 @@
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { navItems } from '../../data/navigation'
-import { isAdmin, useAuth } from '../../hooks/useAuth'
+import { isAdmin, isLoggedIn } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
 import { prefetchRouteData } from '../../utils/routePrefetch'
 import { Icon } from '../ui/Icon'
 import { Logo } from '../ui/Logo'
 
 export function Sidebar() {
-  const { logout } = useAuth()
   const { open, setOpen } = useSidebar()
   const admin = isAdmin()
+  const loggedIn = isLoggedIn()
   const visibleNavItems = navItems.filter((item) => {
+    if (!loggedIn) {
+      return item.to === '/chatbot'
+    }
     if (item.adminOnly) return admin
     if (item.clienteOnly) return !admin
     return true
@@ -59,8 +62,8 @@ export function Sidebar() {
               key={item.to}
               to={item.to}
               end={item.to === '/'}
-              onMouseEnter={() => prefetchRouteData(item.to)}
-              onFocus={() => prefetchRouteData(item.to)}
+              onMouseEnter={() => loggedIn && prefetchRouteData(item.to)}
+              onFocus={() => loggedIn && prefetchRouteData(item.to)}
               onClick={() => setOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-md px-md py-sm font-body-md text-body-md transition-colors duration-200 ease-in-out ${
@@ -76,32 +79,18 @@ export function Sidebar() {
           ))}
         </nav>
 
-        <div className="border-t border-outline-variant/20 p-md">
-          <div className="space-y-xs">
-            <NavLink
-              to="/settings"
+        {!loggedIn && (
+          <div className="border-t border-outline-variant/20 p-md">
+            <Link
+              to="/login"
               onClick={() => setOpen(false)}
-              className={({ isActive }) =>
-                `flex w-full items-center gap-md px-md py-sm font-body-md text-body-md transition-colors ${
-                  isActive
-                    ? 'bg-primary/10 font-bold text-primary'
-                    : 'text-secondary-fixed-dim hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface'
-                }`
-              }
+              className="flex w-full items-center gap-md px-md py-sm font-body-md text-body-md text-primary transition-colors hover:bg-primary/10"
             >
-              <Icon name="settings" />
-              <span>Configuración</span>
-            </NavLink>
-            <button
-              type="button"
-              onClick={logout}
-              className="flex w-full items-center gap-md px-md py-sm font-body-md text-body-md text-secondary-fixed-dim transition-colors hover:bg-surface-variant/10 hover:text-secondary-fixed dark:text-on-surface-variant dark:hover:text-on-surface"
-            >
-              <Icon name="logout" />
-              <span>Cerrar sesión</span>
-            </button>
+              <Icon name="login" />
+              <span>Iniciar sesión</span>
+            </Link>
           </div>
-        </div>
+        )}
       </aside>
     </>
   )
