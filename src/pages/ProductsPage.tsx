@@ -517,22 +517,6 @@ export function ProductsPage() {
             </option>
           ))}
         </Select>
-        <div className="flex min-w-0 w-full items-center gap-2 md:w-auto">
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 shrink items-center justify-center gap-2 rounded-lg border border-outline px-4 py-2.5 text-on-surface-variant transition-all hover:bg-surface-container hover:text-primary active:scale-95"
-          >
-            <Icon name="filter_list" size={18} className="shrink-0" />
-            <span className="truncate text-body-sm">Más filtros</span>
-          </button>
-          <button
-            type="button"
-            className="shrink-0 rounded-lg border border-outline p-2.5 text-on-surface-variant transition-all hover:bg-surface-container"
-            title="Exportar"
-          >
-            <Icon name="file_download" />
-          </button>
-        </div>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
