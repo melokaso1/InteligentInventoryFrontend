@@ -23,19 +23,13 @@ import {
   messageRequiresCheckoutAuth,
 } from '../utils/checkoutAuth'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
+import { ChatHelpFab } from '../components/chat/ChatHelpFab'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
 import { PurchaseTutorialPanel } from '../components/chat/PurchaseTutorialPanel'
 import { Icon } from '../components/ui/Icon'
 type MobileView = 'chat' | 'summary'
 type HealthStatus = 'checking' | 'healthy' | 'unhealthy'
-
-const TUTORIAL_DESKTOP_KEY_ADMIN = 'plonsazo-chat-tutorial-open-v2'
-const TUTORIAL_DESKTOP_KEY_CLIENTE = 'plonsazo-chat-tutorial-open-cliente-v2'
-
-function getTutorialDesktopStorageKey() {
-  return isAdmin() ? TUTORIAL_DESKTOP_KEY_ADMIN : TUTORIAL_DESKTOP_KEY_CLIENTE
-}
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -91,10 +85,7 @@ export function ChatbotPage() {
   const [fulfillmentStatus, setFulfillmentStatus] = useState<FulfillmentStatus | null>(null)
   const [sessionId, setSessionId] = useState(() => getChatSessionId())
   const [healthStatus, setHealthStatus] = useState<HealthStatus>('checking')
-  const [tutorialDesktopOpen, setTutorialDesktopOpen] = useState(
-    () => localStorage.getItem(getTutorialDesktopStorageKey()) === 'true',
-  )
-  const [tutorialMobileOpen, setTutorialMobileOpen] = useState(false)
+  const [tutorialOpen, setTutorialOpen] = useState(false)
   const [resumeCheckoutBanner, setResumeCheckoutBanner] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const scrollBehaviorRef = useRef<ScrollBehavior>('smooth')
@@ -365,20 +356,6 @@ export function ChatbotPage() {
     void sendMessage(productCode)
   }
 
-  const closeTutorialDesktop = () => {
-    setTutorialDesktopOpen(false)
-    localStorage.setItem(getTutorialDesktopStorageKey(), 'false')
-  }
-
-  const openTutorialDesktop = () => {
-    setTutorialDesktopOpen(true)
-    localStorage.setItem(getTutorialDesktopStorageKey(), 'true')
-  }
-
-  const openTutorialMobile = () => {
-    setTutorialMobileOpen(true)
-  }
-
   const handleConfirmPurchase = () => {
     if (!isLoggedIn()) {
       redirectToCheckoutLogin()
@@ -562,16 +539,6 @@ export function ChatbotPage() {
             </span>
           </span>
 
-          <button
-            type="button"
-            onClick={openTutorialDesktop}
-            className="flex shrink-0 items-center px-sm text-primary transition-colors hover:bg-primary/10"
-            aria-label="Abrir guía de compra"
-            title="Ayuda"
-          >
-            <Icon name="help" size={22} />
-          </button>
-
           {healthStatus === 'healthy' ? (
             <button
               type="button"
@@ -626,17 +593,15 @@ export function ChatbotPage() {
           onChange={setInput}
           onSend={() => void sendMessage(input)}
           disabled={!chatAvailable || !historyLoaded}
-          onHelpClick={openTutorialMobile}
+        />
+
+        <ChatHelpFab
+          onClick={() => setTutorialOpen(true)}
+          visible={mobileView === 'chat' && !tutorialOpen}
         />
       </section>
 
-      <PurchaseTutorialPanel
-        className={mobileView !== 'chat' ? 'max-lg:hidden' : ''}
-        desktopOpen={tutorialDesktopOpen}
-        mobileOpen={tutorialMobileOpen}
-        onDesktopClose={closeTutorialDesktop}
-        onMobileClose={() => setTutorialMobileOpen(false)}
-      />
+      <PurchaseTutorialPanel open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
 
       <OperationSummary
         className={

@@ -1,5 +1,4 @@
 import { createPortal } from 'react-dom'
-import { Icon } from '../ui/Icon'
 import { Drawer } from '../ui/Drawer'
 
 const STEPS = [
@@ -72,50 +71,16 @@ function TutorialContent() {
 }
 
 interface PurchaseTutorialPanelProps {
-  desktopOpen: boolean
-  mobileOpen: boolean
-  onDesktopClose: () => void
-  onMobileClose: () => void
-  className?: string
+  open: boolean
+  onClose: () => void
 }
 
-export function PurchaseTutorialPanel({
-  desktopOpen,
-  mobileOpen,
-  onDesktopClose,
-  onMobileClose,
-  className = '',
-}: PurchaseTutorialPanelProps) {
-  const mobileOverlay = (
-    <Drawer open={mobileOpen} onClose={onMobileClose} title="Guía rápida" subtitle="¿Cómo comprar?">
+export function PurchaseTutorialPanel({ open, onClose }: PurchaseTutorialPanelProps) {
+  const overlay = (
+    <Drawer open={open} onClose={onClose} title="Guía rápida" subtitle="¿Cómo comprar?">
       <TutorialContent />
     </Drawer>
   )
 
-  return (
-    <>
-      {typeof document !== 'undefined' ? createPortal(mobileOverlay, document.body) : mobileOverlay}
-
-      {desktopOpen ? (
-        <aside
-          className={`hidden min-h-0 w-72 shrink-0 flex-col overflow-hidden border-l border-outline-variant bg-surface-container transition-all duration-300 lg:flex ${className}`}
-        >
-          <div className="flex shrink-0 items-center justify-between border-b border-outline-variant px-md py-sm">
-            <h2 className="font-headline-sm text-headline-sm text-on-surface">¿Cómo comprar?</h2>
-            <button
-              type="button"
-              onClick={onDesktopClose}
-              className="rounded p-xs text-on-surface-variant transition-colors hover:bg-surface-container-high"
-              aria-label="Cerrar guía"
-            >
-              <Icon name="close" size={20} />
-            </button>
-          </div>
-          <div className="custom-scrollbar flex-1 overflow-y-auto p-md">
-            <TutorialContent />
-          </div>
-        </aside>
-      ) : null}
-    </>
-  )
+  return typeof document !== 'undefined' ? createPortal(overlay, document.body) : overlay
 }

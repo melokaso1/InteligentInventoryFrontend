@@ -5,10 +5,9 @@ interface ChatInputProps {
   onChange: (value: string) => void
   onSend: () => void
   disabled?: boolean
-  onHelpClick?: () => void
 }
 
-export function ChatInput({ value, onChange, onSend, disabled = false, onHelpClick }: ChatInputProps) {
+export function ChatInput({ value, onChange, onSend, disabled = false }: ChatInputProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -20,17 +19,6 @@ export function ChatInput({ value, onChange, onSend, disabled = false, onHelpCli
   return (
     <div className="z-10 min-w-0 border-t border-outline-variant bg-surface p-md pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-lg sm:pb-lg">
       <div className="flex min-w-0 items-center gap-sm">
-        {onHelpClick ? (
-          <button
-            type="button"
-            onClick={onHelpClick}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-outline-variant bg-surface-container-high transition-colors hover:bg-surface-bright lg:hidden"
-            aria-label="Abrir guía de compra"
-            title="Ayuda"
-          >
-            <Icon name="help" size={22} className="text-primary" />
-          </button>
-        ) : null}
         <div className="flex min-w-0 flex-1 items-center gap-sm rounded border border-outline-variant bg-surface-container-low px-md py-sm transition-all focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
           <input
             className="h-11 min-w-0 flex-1 border-none bg-transparent px-0 text-base leading-normal text-on-surface placeholder:text-outline outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
