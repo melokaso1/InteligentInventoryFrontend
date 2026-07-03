@@ -3,6 +3,7 @@ import type { Invoice } from '../types'
 import { fetchMyInvoices, payMyInvoice } from '../api'
 import { canPayInvoice, PayInvoiceModal, type PaymentMethod } from '../components/invoices/PayInvoiceModal'
 import { Icon } from '../components/ui/Icon'
+import { PageHelpCard } from '../components/ui/PageHelpCard'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { Toast } from '../components/ui/Toast'
 import { useToast } from '../hooks/useToast'
@@ -89,6 +90,25 @@ export function ClientInvoicesPage() {
           </p>
         ) : null}
       </div>
+
+      <PageHelpCard
+        storageKey="my-invoices"
+        icon="payments"
+        title="¿Cómo pagar una factura?"
+        intro="Las facturas se generan al confirmar una compra en el chatbot."
+        steps={[
+          <>
+            Localiza la factura con estado <strong>Pendiente</strong> o <strong>Vencida</strong>.
+          </>,
+          <>
+            Pulsa <strong>Pagar factura</strong> en la fila o tarjeta correspondiente.
+          </>,
+          <>
+            Elige el método de pago en el cuadro de diálogo y confirma para registrar el pago.
+          </>,
+        ]}
+        tip="Tras pagar, el estado cambiará a Pagada. Si no ves el botón, la factura ya está saldada o no requiere acción."
+      />
 
       {invoices.length === 0 ? (
         <div className="rounded-xl border border-outline-variant bg-surface-container-low p-xl text-center">

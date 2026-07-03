@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { getUserFacingApiError } from '../../api/client'
 import type { Invoice } from '../../types'
 import { Modal } from '../ui/Modal'
 import { Icon } from '../ui/Icon'
@@ -40,7 +41,7 @@ export function PayInvoiceModal({ open, invoice, onClose, onConfirm, adminMode =
       await onConfirm(paymentMethod)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo registrar el pago.')
+      setError(getUserFacingApiError(err, 'No se pudo registrar el pago.'))
     } finally {
       setSubmitting(false)
     }

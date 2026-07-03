@@ -1,40 +1,45 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Invoice, Product } from '../../types'
-import { createManualInvoice, fetchProducts } from '../../api'
+import { getUserFacingApiError } from '../../api/client'
+import type { Product, Sale } from '../../types'
+import { createManualSale, fetchProducts } from '../../api'
 import { Drawer } from '../ui/Drawer'
 import { Icon } from '../ui/Icon'
 import { formatCOP } from '../../utils/format'
 
-const TAX_RATE = 0.08
+const TAX_RATE = 0.19
 
 interface DraftLineItem {
   productId: string
   code: string
   name: string
-  quantity: number
+  quantity: string
   unitPrice: number
 }
 
-interface CreateManualInvoiceDrawerProps {
+function parseLineQuantity(quantity: string): number {
+  const parsed = Number(quantity)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+interface CreateManualSaleDrawerProps {
   open: boolean
   creating: boolean
   onClose: () => void
   onCreatingChange: (creating: boolean) => void
-  onCreated: (invoice: Invoice) => void
+  onCreated: (sale: Sale) => void
   onError: (message: string) => void
 }
 
-export function CreateManualInvoiceDrawer({
+export function CreateManualSaleDrawer({
   open,
   creating,
   onClose,
   onCreatingChange,
   onCreated,
   onError,
-}: CreateManualInvoiceDrawerProps) {
+}: CreateManualSaleDrawerProps) {
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
-  const [billingNote, setBillingNote] = useState('')
   const [lineItems, setLineItems] = useState<DraftLineItem[]>([])
   const [productSearch, setProductSearch] = useState('')
   const [products, setProducts] = useState<Product[]>([])
@@ -72,14 +77,13 @@ export function CreateManualInvoiceDrawer({
     if (!open) {
       setCustomerName('')
       setCustomerEmail('')
-      setBillingNote('')
       setLineItems([])
       setProductSearch('')
     }
   }, [open])
 
   const subtotal = useMemo(
-    () => lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
+    () => lineItems.reduce((sum, item) => sum + item.unitPrice * parseLineQuantity(item.quantity), 0),
     [lineItems],
   )
   const tax = useMemo(() => Math.round(subtotal * TAX_RATE * 100) / 100, [subtotal])
@@ -90,7 +94,9 @@ export function CreateManualInvoiceDrawer({
       const existing = items.find((item) => item.productId === product.id)
       if (existing) {
         return items.map((item) =>
-          item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+          item.productId === product.id
+            ? { ...item, quantity: String(parseLineQuantity(item.quantity) + 1) }
+            : item,
         )
       }
       return [
@@ -99,18 +105,14 @@ export function CreateManualInvoiceDrawer({
           productId: product.id,
           code: product.code,
           name: product.name,
-          quantity: 1,
+          quantity: '1',
           unitPrice: product.price,
         },
       ]
     })
   }
 
-  const updateQuantity = (productId: string, quantity: number) => {
-    if (quantity < 1) {
-      setLineItems((items) => items.filter((item) => item.productId !== productId))
-      return
-    }
+  const updateQuantity = (productId: string, quantity: string) => {
     setLineItems((items) =>
       items.map((item) => (item.productId === productId ? { ...item, quantity } : item)),
     )
@@ -123,24 +125,31 @@ export function CreateManualInvoiceDrawer({
   const handleCreate = async () => {
     if (creating) return
     if (lineItems.length === 0) {
-      onError('Agrega al menos un producto a la factura.')
+      onError('Agrega al menos un producto a la venta.')
+      return
+    }
+
+    const invalidLine = lineItems.find((item) => parseLineQuantity(item.quantity) < 1)
+    if (invalidLine) {
+      onError('Todas las líneas deben tener una cantidad de al menos 1.')
       return
     }
 
     onCreatingChange(true)
     try {
-      const invoice = await createManualInvoice({
+      const sale = await createManualSale({
         customerName: customerName.trim(),
         customerEmail: customerEmail.trim() || undefined,
-        billingNote: billingNote.trim() || undefined,
+        origin: 'manual',
+        status: 'pending',
         lineItems: lineItems.map((item) => ({
           productId: item.productId,
-          quantity: item.quantity,
+          quantity: parseLineQuantity(item.quantity),
         })),
       })
-      onCreated(invoice)
+      onCreated(sale)
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'No se pudo crear la factura.')
+      onError(getUserFacingApiError(err, 'No se pudo crear la venta.'))
     } finally {
       onCreatingChange(false)
     }
@@ -150,8 +159,9 @@ export function CreateManualInvoiceDrawer({
     <Drawer
       open={open}
       onClose={onClose}
-      title="Crear factura manual"
+      title="Nueva venta manual"
       subtitle="Selecciona productos del catálogo y confirma el total"
+      width="min(896px, calc(100vw - 3rem))"
       footer={
         <div className="flex flex-col gap-md">
           <div className="space-y-sm rounded-lg border border-outline-variant bg-surface-container-low p-md text-body-sm">
@@ -160,7 +170,7 @@ export function CreateManualInvoiceDrawer({
               <span className="font-mono-sm">{formatCOP(subtotal)}</span>
             </div>
             <div className="flex justify-between text-on-surface">
-              <span>IVA (8%)</span>
+              <span>IVA (19%)</span>
               <span className="font-mono-sm">{formatCOP(tax)}</span>
             </div>
             <div className="flex justify-between font-bold text-headline-sm text-on-surface">
@@ -183,7 +193,7 @@ export function CreateManualInvoiceDrawer({
               disabled={creating || lineItems.length === 0}
               className="flex-1 rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary disabled:opacity-50"
             >
-              {creating ? 'Creando…' : 'Crear factura'}
+              {creating ? 'Creando…' : 'Crear venta'}
             </button>
           </div>
         </div>
@@ -251,7 +261,7 @@ export function CreateManualInvoiceDrawer({
         </div>
 
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase text-on-surface-variant">Líneas de factura</p>
+          <p className="mb-2 text-xs font-semibold uppercase text-on-surface-variant">Líneas del pedido</p>
           {lineItems.length === 0 ? (
             <p className="rounded-lg border border-dashed border-outline-variant px-md py-lg text-center text-body-sm text-on-surface-variant">
               Agrega productos desde la lista de arriba.
@@ -288,13 +298,15 @@ export function CreateManualInvoiceDrawer({
                           type="number"
                           min={1}
                           value={item.quantity}
-                          onChange={(e) => updateQuantity(item.productId, Number(e.target.value))}
+                          onChange={(e) => updateQuantity(item.productId, e.target.value)}
                           className="w-16 rounded border border-outline-variant bg-surface-container-lowest px-2 py-1 text-center text-on-surface"
                         />
                       </td>
                       <td className="px-md py-2 text-right font-mono-sm">{formatCOP(item.unitPrice)}</td>
                       <td className="px-md py-2 text-right font-mono-sm font-semibold">
-                        {formatCOP(item.unitPrice * item.quantity)}
+                        {item.quantity.trim() === ''
+                          ? '—'
+                          : formatCOP(item.unitPrice * parseLineQuantity(item.quantity))}
                       </td>
                       <td className="px-md py-2 text-right">
                         <button
@@ -312,17 +324,6 @@ export function CreateManualInvoiceDrawer({
               </table>
             </div>
           )}
-        </div>
-
-        <div>
-          <label className="text-xs font-semibold uppercase text-on-surface-variant">Nota (opcional)</label>
-          <textarea
-            value={billingNote}
-            onChange={(e) => setBillingNote(e.target.value)}
-            rows={3}
-            className="mt-1 w-full resize-none rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
-            placeholder="Notas de facturación"
-          />
         </div>
       </div>
     </Drawer>

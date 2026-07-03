@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { ApiError } from '../api/client'
+import { ApiError, getUserFacingApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { PasswordChecklist } from '../components/ui/PasswordChecklist'
@@ -77,6 +77,11 @@ export function RegisterPage() {
       return
     }
 
+    if (!name.trim()) {
+      setError('El nombre completo es obligatorio.')
+      return
+    }
+
     const validationError = validatePassword(password)
     if (validationError) {
       setError(`La contraseña no cumple los requisitos: ${validationError}.`)
@@ -87,16 +92,10 @@ export function RegisterPage() {
     try {
       await register({ name, email, password })
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409) {
-          setError(err.message || 'Ya existe una cuenta con ese correo electrónico.')
-        } else {
-          setError(err.message || 'No se pudo crear la cuenta.')
-        }
-      } else if (err instanceof TypeError) {
-        setError('No se pudo conectar con el servidor.')
+      if (err instanceof ApiError && err.status === 409) {
+        setError(err.message || 'Ya existe una cuenta con ese correo electrónico.')
       } else {
-        setError('No se pudo crear la cuenta. Inténtalo de nuevo.')
+        setError(getUserFacingApiError(err, 'No se pudo crear la cuenta. Inténtalo de nuevo.'))
       }
     } finally {
       setLoading(false)

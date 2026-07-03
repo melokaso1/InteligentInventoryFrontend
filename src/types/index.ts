@@ -24,6 +24,7 @@ export interface InventoryItem {
   category: string
   warehouse: string
   quantity: number
+  maxStock: number
   unitPrice: number
   stockLevel: StockLevel
   stockPercent: number
@@ -41,6 +42,7 @@ export interface StockMovement {
 
 export type SaleStatus = 'invoiced' | 'pending' | 'confirmed' | 'cancelled'
 export type SaleOrigin = 'manual' | 'chatbot'
+export type FulfillmentStatus = 'preparing' | 'shipped' | 'delivered'
 
 export interface SaleLineItem {
   id: string
@@ -58,6 +60,10 @@ export interface Sale {
   date: string
   total: number
   status: SaleStatus
+  fulfillmentStatus?: FulfillmentStatus
+  preparingSince?: string
+  shippedAt?: string
+  deliveredAt?: string
   taxId?: string
   lineItems: SaleLineItem[]
   subtotal: number
@@ -145,6 +151,21 @@ export interface NavItem {
   icon: string
   adminOnly?: boolean
   clienteOnly?: boolean
+}
+
+export interface AppNotification {
+  id: string
+  title: string
+  message: string
+  type: string
+  saleId?: string
+  isRead: boolean
+  createdAt: string
+}
+
+export interface NotificationList {
+  unreadCount: number
+  items: AppNotification[]
 }
 
 export interface ReportItem {

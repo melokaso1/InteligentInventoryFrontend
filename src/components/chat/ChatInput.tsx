@@ -19,12 +19,6 @@ export function ChatInput({ value, onChange, onSend, disabled = false }: ChatInp
   return (
     <div className="z-10 min-w-0 border-t border-outline-variant bg-surface p-md sm:p-lg">
       <div className="flex min-w-0 items-center gap-sm rounded border border-outline-variant bg-surface-container-low px-md py-sm transition-all focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
-        <button
-          type="button"
-          className="shrink-0 p-sm text-on-surface-variant transition-colors hover:text-primary"
-        >
-          <Icon name="attach_file" />
-        </button>
         <input
           className="h-11 min-w-0 flex-1 border-none bg-transparent px-0 text-base leading-normal text-on-surface placeholder:text-outline outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
           placeholder="Escribe tu respuesta o solicita cambios..."

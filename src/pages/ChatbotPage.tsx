@@ -1,26 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
-import type { ChatMessage } from '../types'
+import { useLocation, useNavigate } from 'react-router-dom'
+import type { ChatMessage, FulfillmentStatus } from '../types'
 import {
   CHAT_SESSION_USER_KEY,
   createNewChatSession,
   fetchChatHealth,
   fetchChatHistory,
+  fetchMyOrders,
   getChatSessionId,
   getLatestChatStateFromHistory,
   mapChatHistoryToMessages,
   sendChatMessage,
   type ChatOperationSummary,
 } from '../api'
-import { ApiError } from '../api/client'
-import { getCurrentUser } from '../hooks/useAuth'
+import { ApiError, getUserFacingApiError } from '../api/client'
+import { getCurrentUser, isAdmin } from '../hooks/useAuth'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { notifyDataMutation } from '../utils/dataSync'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
+import { PurchaseTutorialPanel } from '../components/chat/PurchaseTutorialPanel'
 import { Icon } from '../components/ui/Icon'
+import { PageHelpCard } from '../components/ui/PageHelpCard'
 
 type MobileView = 'chat' | 'summary'
 type HealthStatus = 'checking' | 'healthy' | 'unhealthy'
+
+const TUTORIAL_DESKTOP_KEY_ADMIN = 'plonsazo-chat-tutorial-open'
+const TUTORIAL_DESKTOP_KEY_CLIENTE = 'plonsazo-chat-tutorial-open-cliente'
+
+function getTutorialDesktopStorageKey() {
+  return isAdmin() ? TUTORIAL_DESKTOP_KEY_ADMIN : TUTORIAL_DESKTOP_KEY_CLIENTE
+}
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -28,20 +40,24 @@ const WELCOME_MESSAGE: ChatMessage = {
   content:
     '¡Hola! Soy **Drogui**, tu asistente de ventas en El Plonsazo.\n\n' +
     'Escríbeme en **lenguaje natural** para consultar stock, buscar productos o iniciar una compra. ' +
-    'Si quieres ver el catálogo completo, **pídeme ver el catálogo**.\n\n' +
+    'Para ver el catálogo completo, escribe **«ver catálogo»** (se muestra en páginas de 5 productos). ' +
+    'Para tus facturas, **pídeme ver factura**.\n\n' +
     '**Ejemplos:**\n' +
     '• «consultar stock de PLZ-MJ-001»\n' +
     '• «buscar lsd» o simplemente «lsd»\n' +
     '• «ver catálogo»\n' +
     '• «quiero comprar cocaina»\n' +
+    '• «ver factura» o «mis facturas»\n' +
+    '• «agregar al carrito»\n' +
     '• «cancelar»\n\n' +
-    'También puedes usar los botones del menú.',
+    'También puedes usar los botones del menú o la guía **¿Cómo comprar?** en **Soporte** del menú superior.',
   time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-  chips: ['¿Cómo me comunico?', 'Ver catálogo', 'Consultar stock', 'Buscar producto'],
+  chips: ['¿Cómo me comunico?', 'Ver catálogo', 'Ver factura', 'Consultar stock', 'Buscar producto'],
 }
 
 const CHIP_INTENT_MESSAGES: Record<string, string> = {
-  'Ver catálogo': 'Ver ofertas',
+  'Ver factura': 'ver factura',
+  'Ver catálogo': 'ver catálogo',
   '¿Cómo me comunico?': '¿Cómo me comunico?',
   'Consultar stock': 'Consultar stock',
   'Buscar producto': 'Buscar producto',
@@ -52,35 +68,19 @@ const CHIP_INTENT_MESSAGES: Record<string, string> = {
 }
 
 function getChatErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 502) {
-      return 'No se pudo conectar con la API (.NET). Inicia el backend en el puerto 5151.'
-    }
-    if (err.status === 503) {
-      return 'El chatbot FastAPI no está disponible. Ejecuta: cd LLMChatBot && python run.py'
-    }
-    if (err.status === 401) {
-      return 'Sesión expirada. Vuelve a iniciar sesión.'
-    }
-    return err.message || 'No pude procesar tu mensaje. Inténtalo de nuevo.'
+  if (err instanceof ApiError && err.status === 401) {
+    return 'Sesión expirada. Vuelve a iniciar sesión.'
   }
-  return 'No pude conectar con el servicio de chat. Verifica que la API .NET y el chatbot FastAPI estén en ejecución.'
+  return getUserFacingApiError(err, 'No pude procesar tu mensaje. Inténtalo de nuevo.', 'chat')
 }
 
 function getHealthBannerMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 502) {
-      return 'API no disponible — inicia el backend .NET en el puerto 5151 (cd Backend/Api && dotnet run).'
-    }
-    if (err.status === 503) {
-      return 'Chatbot no disponible — levanta FastAPI en :8000 (cd LLMChatBot && python run.py).'
-    }
-  }
-  return 'Chatbot no disponible — verifica que la API .NET y FastAPI estén en ejecución.'
+  return getUserFacingApiError(err, 'El asistente no está disponible en este momento. Intenta de nuevo más tarde.', 'chat')
 }
 
 export function ChatbotPage() {
   const location = useLocation()
+  const navigate = useNavigate()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [input, setInput] = useState('')
@@ -89,9 +89,14 @@ export function ChatbotPage() {
   const [operationSummary, setOperationSummary] = useState<ChatOperationSummary | null>(null)
   const [chatState, setChatState] = useState('idle')
   const [invoiceNumber, setInvoiceNumber] = useState<string | undefined>()
+  const [fulfillmentStatus, setFulfillmentStatus] = useState<FulfillmentStatus | null>(null)
   const [sessionId, setSessionId] = useState(() => getChatSessionId())
   const [healthStatus, setHealthStatus] = useState<HealthStatus>('checking')
   const [healthBanner, setHealthBanner] = useState('')
+  const [tutorialDesktopOpen, setTutorialDesktopOpen] = useState(
+    () => localStorage.getItem(getTutorialDesktopStorageKey()) !== 'false',
+  )
+  const [tutorialMobileOpen, setTutorialMobileOpen] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const scrollBehaviorRef = useRef<ScrollBehavior>('smooth')
   const sentInitialForKey = useRef<string | null>(null)
@@ -100,6 +105,31 @@ export function ChatbotPage() {
   const lastCancelSentAtRef = useRef(0)
 
   const chatAvailable = healthStatus === 'healthy'
+
+  const loadLatestFulfillment = useCallback(async (force = false) => {
+    if (
+      !force &&
+      chatState !== 'sale_completed' &&
+      operationSummary?.status !== 'completed'
+    ) {
+      return
+    }
+
+    try {
+      const result = await fetchMyOrders({ pageSize: 1 })
+      const latest = result.items[0]
+      if (latest?.fulfillmentStatus) {
+        setFulfillmentStatus(latest.fulfillmentStatus)
+      }
+    } catch {
+      // Keep previous status if fetch fails.
+    }
+  }, [chatState, operationSummary?.status])
+
+  useRealtimeRefresh(loadLatestFulfillment, [loadLatestFulfillment], {
+    scope: ['orders', 'notifications'],
+    enabled: chatState === 'sale_completed' || operationSummary?.status === 'completed',
+  })
 
   useEffect(() => {
     const userId = getCurrentUser()?.id ?? 'guest'
@@ -148,6 +178,9 @@ export function ChatbotPage() {
           setChatState(restored.chatState)
           setOperationSummary(restored.operationSummary)
           setInvoiceNumber(restored.invoiceNumber)
+          if (restored.chatState === 'sale_completed') {
+            void loadLatestFulfillment(true)
+          }
         } else {
           setMessages([WELCOME_MESSAGE])
           setChatState('idle')
@@ -172,7 +205,7 @@ export function ChatbotPage() {
     return () => {
       cancelled = true
     }
-  }, [sessionId])
+  }, [sessionId, loadLatestFulfillment])
 
   const startNewConversation = () => {
     const newSessionId = createNewChatSession()
@@ -262,6 +295,13 @@ export function ChatbotPage() {
       setChatState(result.state)
       setOperationSummary(result.operationSummary ?? null)
       setInvoiceNumber(result.invoiceNumber)
+      if (result.invoiceNumber || result.state === 'sale_completed') {
+        notifyDataMutation('sales')
+        notifyDataMutation('inventory')
+        notifyDataMutation('orders')
+        setFulfillmentStatus('preparing')
+        void loadLatestFulfillment(true)
+      }
     } catch (err) {
       if (requestId === latestRequestIdRef.current) {
         setMessages((prev) => [
@@ -290,8 +330,33 @@ export function ChatbotPage() {
 
   const handleChipClick = (chip: string) => {
     if (!chatAvailable) return
+    if (chip === 'Ver factura') {
+      navigate(isAdmin() ? '/invoices' : '/my-invoices')
+      return
+    }
     void sendMessage(CHIP_INTENT_MESSAGES[chip] ?? chip)
   }
+
+  const handleProductClick = (productCode: string) => {
+    if (!chatAvailable) return
+    void sendMessage(productCode)
+  }
+
+  const closeTutorialDesktop = () => {
+    setTutorialDesktopOpen(false)
+    localStorage.setItem(getTutorialDesktopStorageKey(), 'false')
+  }
+
+  const openTutorialDesktop = () => {
+    setTutorialDesktopOpen(true)
+    localStorage.setItem(getTutorialDesktopStorageKey(), 'true')
+  }
+
+  const openTutorialMobile = () => {
+    setTutorialMobileOpen(true)
+  }
+
+  const clienteUser = !isAdmin()
 
   return (
     <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden lg:flex-row">
@@ -352,6 +417,25 @@ export function ChatbotPage() {
           </div>
         )}
 
+        {clienteUser ? (
+          <PageHelpCard
+            storageKey="chatbot-client-tip"
+            icon="shopping_cart"
+            title="¿Cómo comprar con Drogui?"
+            className="z-10 shrink-0 px-lg py-sm lg:hidden"
+            steps={[
+              <>Escribe lo que buscas, por ejemplo: «quiero 2 unidades de marihuana blue».</>,
+              <>Elige el producto si hay varias opciones y confirma la cantidad.</>,
+              <>Al terminar, revisa tu factura en <strong>Mis facturas</strong> o pídele «ver factura» al chat.</>,
+            ]}
+            tip={
+              <>
+                Toca el botón <strong>?</strong> abajo a la derecha para ver la guía completa con ejemplos de comandos.
+              </>
+            }
+          />
+        ) : null}
+
         {healthStatus !== 'healthy' && (
           <div
             role="alert"
@@ -400,6 +484,7 @@ export function ChatbotPage() {
               key={msg.id}
               message={msg}
               onChipClick={handleChipClick}
+              onProductClick={handleProductClick}
               chipsDisabled={!chatAvailable}
             />
           ))}
@@ -414,6 +499,16 @@ export function ChatbotPage() {
         />
       </section>
 
+      <PurchaseTutorialPanel
+        className={mobileView !== 'chat' ? 'max-lg:hidden' : ''}
+        desktopOpen={tutorialDesktopOpen}
+        mobileOpen={tutorialMobileOpen}
+        onDesktopToggle={openTutorialDesktop}
+        onDesktopClose={closeTutorialDesktop}
+        onMobileOpen={openTutorialMobile}
+        onMobileClose={() => setTutorialMobileOpen(false)}
+      />
+
       <OperationSummary
         className={
           mobileView === 'chat' ? 'hidden min-h-0 lg:flex lg:shrink-0' : 'flex min-h-0 flex-1 lg:shrink-0'
@@ -421,6 +516,7 @@ export function ChatbotPage() {
         summary={operationSummary}
         chatState={chatState}
         invoiceNumber={invoiceNumber}
+        fulfillmentStatus={fulfillmentStatus}
         onConfirm={() => void sendMessage('Confirmar compra')}
         onModify={() => void sendMessage('Quiero modificar el pedido.')}
         onCancel={() => void sendMessage('cancelar')}

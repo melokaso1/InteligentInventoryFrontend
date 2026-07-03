@@ -1,13 +1,10 @@
 import { NavLink } from 'react-router-dom'
 import { isAdmin } from '../../hooks/useAuth'
 import { useSidebar } from '../../hooks/useSidebar'
+import { NotificationDropdown } from '../notifications/NotificationDropdown'
 import { Icon } from '../ui/Icon'
 import { Logo } from '../ui/Logo'
 import { ThemeToggle } from '../ui/ThemeToggle'
-
-interface HeaderProps {
-  searchPlaceholder?: string
-}
 
 const HEADER_TABS = [
   { label: 'Resumen', to: '/', end: true, adminOnly: true },
@@ -15,13 +12,13 @@ const HEADER_TABS = [
   { label: 'Soporte', to: '/support' },
 ] as const
 
-export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
+export function Header() {
   const { toggle: toggleSidebar } = useSidebar()
   const admin = isAdmin()
   const visibleTabs = HEADER_TABS.filter((tab) => !('adminOnly' in tab && tab.adminOnly) || admin)
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 max-w-full shrink-0 items-center justify-between gap-md overflow-hidden border-b border-outline-variant bg-surface px-md shadow-sm sm:px-lg lg:ml-sidebar-width lg:w-[calc(100%-var(--spacing-sidebar-width))]">
+    <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 max-w-full shrink-0 items-center justify-between gap-md border-b border-outline-variant bg-surface px-md shadow-sm sm:px-lg lg:ml-sidebar-width lg:w-[calc(100%-var(--spacing-sidebar-width))]">
       <div className="flex min-w-0 flex-1 items-center gap-md sm:gap-xl">
         <button
           type="button"
@@ -37,18 +34,6 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
           className="shrink-0 lg:hidden"
           textClassName="font-headline-sm text-headline-sm font-extrabold text-on-primary-fixed dark:text-primary"
         />
-        <div className="relative hidden lg:block">
-          <Icon
-            name="search"
-            className="absolute left-sm top-1/2 -translate-y-1/2 text-on-surface-variant"
-            size={18}
-          />
-          <input
-            className="w-64 rounded-full border border-outline-variant bg-surface-container-low py-xs pl-xl pr-md font-body-sm text-body-sm text-on-surface outline-none focus:ring-1 focus:ring-primary"
-            placeholder={searchPlaceholder}
-            type="text"
-          />
-        </div>
       </div>
 
       <nav className="flex shrink-0 items-center gap-md sm:gap-lg">
@@ -72,19 +57,7 @@ export function Header({ searchPlaceholder = 'Buscar datos...' }: HeaderProps) {
         </div>
         <div className="hidden h-6 w-px bg-outline-variant sm:block" />
         <div className="flex items-center gap-md">
-          <button
-            type="button"
-            className="relative text-on-surface-variant transition-colors hover:text-primary"
-          >
-            <Icon name="notifications" />
-            <span className="absolute right-0 top-0 h-2 w-2 rounded-full bg-error" />
-          </button>
-          <button
-            type="button"
-            className="hidden text-on-surface-variant transition-colors hover:text-primary sm:block"
-          >
-            <Icon name="help_outline" />
-          </button>
+          <NotificationDropdown />
           <ThemeToggle />
           <span
             className="flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant bg-surface-container-high text-on-surface-variant"

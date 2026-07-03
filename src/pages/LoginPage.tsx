@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { ApiError } from '../api/client'
+import { ApiError, getUserFacingApiError } from '../api/client'
 import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { Modal } from '../components/ui/Modal'
@@ -85,18 +85,10 @@ export function LoginPage() {
     try {
       await login(email, password)
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 401) {
-          setError('Correo o contraseña incorrectos.')
-        } else if (err.status === 502) {
-          setError('API no disponible (puerto 5151). Ejecuta dotnet run en Backend/Api.')
-        } else {
-          setError(err.message || 'No se pudo iniciar sesión. Inténtalo de nuevo.')
-        }
-      } else if (err instanceof TypeError) {
-        setError('No se pudo conectar con el servidor.')
+      if (err instanceof ApiError && err.status === 401) {
+        setError('Correo o contraseña incorrectos.')
       } else {
-        setError('No se pudo iniciar sesión. Inténtalo de nuevo.')
+        setError(getUserFacingApiError(err, 'No se pudo iniciar sesión. Inténtalo de nuevo.'))
       }
     } finally {
       setLoading(false)

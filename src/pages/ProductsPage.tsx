@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Product } from '../types'
-import { ApiError } from '../api/client'
+import { ApiError, getUserFacingApiError, type PagedResponse } from '../api/client'
+import { isCacheFresh, readCache } from '../api/cache'
 import {
   createProduct,
   deleteProduct,
@@ -26,6 +27,8 @@ import {
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import { formatCOP, saleUnitLabel } from '../utils/format'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { notifyDataMutation } from '../utils/dataSync'
 
 const emptyProductForm = {
   code: '',
@@ -50,23 +53,41 @@ function productToForm(product: Product) {
 }
 
 const PAGE_SIZE = 15
+const DEFAULT_PRODUCTS_CACHE_KEY = `/api/products?page=1&pageSize=${PAGE_SIZE}`
+
+type ProductStatusFilter = '' | 'active' | 'inactive'
+
+const productStatusFilterOptions: { value: ProductStatusFilter; label: string }[] = [
+  { value: '', label: 'Todos' },
+  { value: 'active', label: 'Activos' },
+  { value: 'inactive', label: 'Desactivados' },
+]
+
+const filterSelectClassName =
+  'min-w-[10.5rem] w-full rounded-lg border border-outline bg-surface-container-low py-2.5 pl-3 pr-9 text-body-md focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none sm:w-auto'
 
 export function ProductsPage() {
   const navigate = useNavigate()
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts] = useState<Product[]>(
+    () => readCache<PagedResponse<Product>>(DEFAULT_PRODUCTS_CACHE_KEY)?.items ?? [],
+  )
   const [stats, setStats] = useState({
-    totalProducts: 0,
-    activeProducts: 0,
-    outOfStockProducts: 0,
-    totalInventoryValue: 0,
+    totalProducts: readCache<{ totalProducts: number }>('/api/products/stats')?.totalProducts ?? 0,
+    activeProducts: readCache<{ activeProducts: number }>('/api/products/stats')?.activeProducts ?? 0,
+    outOfStockProducts: readCache<{ outOfStockProducts: number }>('/api/products/stats')?.outOfStockProducts ?? 0,
+    totalInventoryValue:
+      readCache<{ totalInventoryValue: number }>('/api/products/stats')?.totalInventoryValue ?? 0,
   })
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(
+    () => !isCacheFresh(DEFAULT_PRODUCTS_CACHE_KEY) && !isCacheFresh('/api/products/stats'),
+  )
   const [refreshing, setRefreshing] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [page, setPage] = useState(1)
   const [searchInput, setSearchInput] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState<ProductStatusFilter>('')
   const [categories, setCategories] = useState<string[]>([])
   const [selected, setSelected] = useState<Product | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -97,6 +118,32 @@ export function ProductsPage() {
     setStats(statsResult)
   }, [])
 
+  const loadProducts = useCallback(async () => {
+    const result = await fetchProducts(
+      {
+        q: debouncedSearch || undefined,
+        category: categoryFilter || undefined,
+        status: statusFilter || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      },
+    )
+    setProducts(result.items)
+    setTotalCount(result.totalCount)
+  }, [debouncedSearch, categoryFilter, statusFilter, page])
+
+  const refreshProductsData = useCallback(async () => {
+    try {
+      await Promise.all([loadSummary(), loadProducts()])
+    } catch {
+      // Silent background refresh keeps current values on failure.
+    }
+  }, [loadSummary, loadProducts])
+
+  useRealtimeRefresh(refreshProductsData, [refreshProductsData], {
+    scope: ['products', 'inventory', 'sales'],
+  })
+
   useEffect(() => {
     if (!isLoggedIn()) {
       navigate('/login', { replace: true })
@@ -112,7 +159,7 @@ export function ProductsPage() {
         navigate('/login', { replace: true })
         return
       }
-      setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las estadísticas.')
+      setLoadError(getUserFacingApiError(err, 'No se pudieron cargar las estadísticas.'))
     })
   }, [loadSummary, navigate])
 
@@ -126,7 +173,7 @@ export function ProductsPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedSearch, categoryFilter])
+  }, [debouncedSearch, categoryFilter, statusFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -166,6 +213,7 @@ export function ProductsPage() {
           {
             q: debouncedSearch || undefined,
             category: categoryFilter || undefined,
+            status: statusFilter || undefined,
             page,
             pageSize: PAGE_SIZE,
           },
@@ -181,7 +229,7 @@ export function ProductsPage() {
           navigate('/login', { replace: true })
           return
         }
-        setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar los productos.')
+        setLoadError(getUserFacingApiError(err, 'No se pudieron cargar los productos.'))
       } finally {
         if (requestId !== productsRequestId.current) return
         if (isInitialLoad.current) {
@@ -196,7 +244,7 @@ export function ProductsPage() {
     return () => {
       controller.abort()
     }
-  }, [debouncedSearch, categoryFilter, page, retryCount, navigate])
+  }, [debouncedSearch, categoryFilter, statusFilter, page, retryCount, navigate])
 
   const avgUnitPrice =
     stats.totalProducts > 0 ? Math.round(stats.totalInventoryValue / stats.totalProducts) : 0
@@ -204,19 +252,7 @@ export function ProductsPage() {
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
-
-  const loadProducts = useCallback(async () => {
-    const result = await fetchProducts(
-      {
-        q: debouncedSearch || undefined,
-        category: categoryFilter || undefined,
-        page,
-        pageSize: PAGE_SIZE,
-      },
-    )
-    setProducts(result.items)
-    setTotalCount(result.totalCount)
-  }, [debouncedSearch, categoryFilter, page])
+  const hasActiveFilters = Boolean(debouncedSearch || categoryFilter || statusFilter)
 
   const openDrawer = (product: Product) => {
     setSelected(product)
@@ -272,11 +308,12 @@ export function ProductsPage() {
       })
       await loadSummary()
       await loadProducts()
+      notifyDataMutation('products')
       setSelected(updated)
       setEditForm(productToForm(updated))
       showToast('Producto actualizado.')
     } catch (err) {
-      setEditFormError(err instanceof ApiError ? err.message : 'No se pudo actualizar el producto.')
+      setEditFormError(getUserFacingApiError(err, 'No se pudo actualizar el producto.'))
     } finally {
       setEditSubmitting(false)
     }
@@ -290,10 +327,10 @@ export function ProductsPage() {
       const duplicate = await duplicateProduct(product.id)
       await loadSummary()
       await loadProducts()
-      openDrawer(duplicate)
-      showToast('Producto duplicado correctamente.')
+      notifyDataMutation('products')
+      showToast(`Producto duplicado: ${duplicate.name} (${duplicate.code}).`)
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo duplicar el producto.')
+      showToast(getUserFacingApiError(err, 'No se pudo duplicar el producto.'))
     } finally {
       setDuplicatingId(null)
     }
@@ -324,11 +361,12 @@ export function ProductsPage() {
         description: productForm.description.trim(),
       })
       await loadSummary()
+      notifyDataMutation('products')
       setPage(1)
       setAddDrawerOpen(false)
       showToast('Producto creado correctamente.')
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'No se pudo crear el producto.')
+      setFormError(getUserFacingApiError(err, 'No se pudo crear el producto.'))
     } finally {
       setSubmitting(false)
     }
@@ -344,9 +382,10 @@ export function ProductsPage() {
       setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)))
       if (selected?.id === product.id) setSelected(updated)
       await loadSummary()
+      notifyDataMutation('products')
       showToast(`Producto ${nextStatus === 'active' ? 'activado' : 'desactivado'}.`)
     } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : 'No se pudo actualizar el estado del producto.')
+      setLoadError(getUserFacingApiError(err, 'No se pudo actualizar el estado del producto.'))
     } finally {
       setTogglingStatusId(null)
     }
@@ -361,10 +400,11 @@ export function ProductsPage() {
       if (selected?.id === deleteTarget.id) closeDrawer()
       await loadSummary()
       await loadProducts()
+      notifyDataMutation('products')
       setDeleteTarget(null)
       showToast('Producto eliminado.')
     } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : 'No se pudo eliminar el producto.')
+      setLoadError(getUserFacingApiError(err, 'No se pudo eliminar el producto.'))
     } finally {
       setDeleting(false)
     }
@@ -490,33 +530,69 @@ export function ProductsPage() {
         ))}
       </div>
 
-      <div className="mb-xl flex min-w-0 max-w-full flex-col gap-md overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest p-md shadow-sm md:flex-row md:flex-wrap md:items-center">
-        <div className="relative min-w-0 w-full md:min-w-[240px] md:flex-1">
-          <Icon
-            name="search"
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
-            size={18}
-          />
-          <input
-            className="w-full bg-surface-container-low border border-outline rounded-lg py-2.5 pl-10 pr-4 text-body-md focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all outline-none"
-            placeholder="Filtrar por nombre, SKU o descripción..."
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
+      <div className="mb-xl flex min-w-0 max-w-full flex-col gap-md overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest p-md shadow-sm">
+        <div className="flex min-w-0 flex-col flex-wrap items-stretch gap-md sm:flex-row sm:items-end">
+          <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
+            <label htmlFor="products-search" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+              Buscar
+            </label>
+            <Icon
+              name="search"
+              className="absolute left-3 bottom-2.5 text-on-surface-variant"
+              size={18}
+            />
+            <input
+              id="products-search"
+              className="w-full bg-surface-container-low border border-outline rounded-lg py-2.5 pl-10 pr-4 text-body-md focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all outline-none"
+              placeholder="Nombre, SKU o descripción..."
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          <div className="min-w-0 sm:w-auto">
+            <label htmlFor="products-category-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+              Categoría
+            </label>
+            <Select
+              id="products-category-filter"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className={filterSelectClassName}
+            >
+              <option value="">Todas las categorías</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="min-w-0 sm:w-auto">
+            <label htmlFor="products-status-filter" className="mb-1 block font-label-md text-label-md text-on-surface-variant">
+              Estado
+            </label>
+            <Select
+              id="products-status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ProductStatusFilter)}
+              className={filterSelectClassName}
+            >
+              {productStatusFilterOptions.map((option) => (
+                <option key={option.value || 'all'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
-        <Select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="w-full min-w-0 shrink bg-surface-container-low border border-outline rounded-lg py-2.5 pl-4 text-body-md focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none md:w-auto"
-        >
-          <option value="">Todas las categorías</option>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
-          ))}
-        </Select>
+        {hasActiveFilters ? (
+          <p className="text-body-sm text-on-surface-variant" role="status">
+            {totalCount === 0
+              ? 'Ningún producto coincide con los filtros seleccionados.'
+              : `${totalCount.toLocaleString('es-CO')} producto${totalCount === 1 ? '' : 's'} encontrado${totalCount === 1 ? '' : 's'}.`}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
@@ -544,7 +620,9 @@ export function ProductsPage() {
               {products.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-gutter py-8 text-center text-on-surface-variant">
-                    No se encontraron productos con los filtros actuales.
+                    {hasActiveFilters
+                      ? 'No se encontraron productos con los filtros actuales.'
+                      : 'No hay productos registrados.'}
                   </td>
                 </tr>
               ) : (
@@ -605,26 +683,38 @@ export function ProductsPage() {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
-                          onClick={() => openDrawer(product)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDrawer(product)
+                          }}
                           className="p-2 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded-lg transition-all"
-                          title="Editar"
+                          title="Editar producto"
+                          aria-label="Editar producto"
                         >
                           <Icon name="edit" />
                         </button>
                         <button
                           type="button"
                           disabled={duplicatingId === product.id}
-                          onClick={() => void handleDuplicateProduct(product)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void handleDuplicateProduct(product)
+                          }}
                           className="p-2 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded-lg transition-all disabled:opacity-50"
-                          title="Duplicar"
+                          title="Duplicar producto"
+                          aria-label="Duplicar producto"
                         >
                           <Icon name="content_copy" />
                         </button>
                         <button
                           type="button"
-                          onClick={() => setDeleteTarget(product)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget(product)
+                          }}
                           className="p-2 text-on-surface-variant hover:text-error hover:bg-error/10 rounded-lg transition-all"
-                          title="Eliminar"
+                          title="Eliminar producto"
+                          aria-label="Eliminar producto"
                         >
                           <Icon name="delete" />
                         </button>

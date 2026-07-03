@@ -63,6 +63,7 @@ function formatInlineMarkdown(content: string, keyPrefix: string): ReactNode[] {
 interface ChatMessageProps {
   message: ChatMessageType
   onChipClick?: (chip: string) => void
+  onProductClick?: (productCode: string) => void
   chipsDisabled?: boolean
 }
 
@@ -77,7 +78,12 @@ function chipStyles(chip: string) {
   return 'bg-surface-container-high text-on-surface border border-outline-variant hover:bg-surface-bright'
 }
 
-export function ChatMessage({ message, onChipClick, chipsDisabled = false }: ChatMessageProps) {
+export function ChatMessage({
+  message,
+  onChipClick,
+  onProductClick,
+  chipsDisabled = false,
+}: ChatMessageProps) {
   if (message.role === 'user') {
     return (
       <div className="flex max-w-[85%] flex-row-reverse gap-md self-end">
@@ -107,10 +113,9 @@ export function ChatMessage({ message, onChipClick, chipsDisabled = false }: Cha
               <ProductOfferList
                 offers={message.offers}
                 totalCount={message.offersTotalCount}
-                onLoadMore={
-                  message.offersTotalCount &&
-                  message.offers.length < message.offersTotalCount
-                    ? () => onChipClick?.('Ver más productos')
+                onProductClick={
+                  onProductClick
+                    ? (offer) => onProductClick(offer.productCode)
                     : undefined
                 }
               />

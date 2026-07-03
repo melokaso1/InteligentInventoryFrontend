@@ -1,15 +1,18 @@
 import type {
   ActivityItem,
+  AppNotification,
   DashboardKpi,
   InventoryItem,
   Invoice,
   LowStockItem,
+  NotificationList,
   Product,
   ProductStatus,
   Sale,
   StockMovement,
 } from '../types'
-import { ApiError, apiFetch, sanitizeApiErrorMessage, type PagedResponse } from './client'
+import { apiFetch, buildApiError, type PagedResponse } from './client'
+import { buildCacheKey, cachedFetch } from './cache'
 import { getToken, getCurrentUser } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
@@ -63,6 +66,7 @@ interface ApiSale {
   date: string
   total: number
   status: Sale['status']
+  fulfillmentStatus?: Sale['fulfillmentStatus']
   taxId?: string
   lineItems: { id: string; name: string; icon: string; quantity: number; unitPrice: number }[]
   subtotal: number
@@ -105,6 +109,14 @@ interface CreateManualInvoicePayload {
   lineItems: { productId: string; quantity: number }[]
 }
 
+interface CreateManualSalePayload {
+  customerName: string
+  customerEmail?: string
+  origin: 'manual' | 'chatbot'
+  status: 'pending' | 'invoiced' | 'confirmed' | 'cancelled'
+  lineItems: { productId: string; quantity: number; measureUnit?: string }[]
+}
+
 interface CreateInvoicePayload {
   client: string
   billingNote: string
@@ -129,6 +141,7 @@ interface ApiInventoryItem {
   category: string
   warehouse: string
   quantity: number
+  maxStock: number
   unitPrice: number
   stockLevel: InventoryItem['stockLevel']
   stockPercent: number
@@ -255,6 +268,7 @@ function mapSale(s: ApiSale): Sale {
     date: s.date,
     total: s.total,
     status: s.status,
+    fulfillmentStatus: s.fulfillmentStatus ?? 'preparing',
     taxId: s.taxId,
     lineItems: s.lineItems.map((li) => ({
       id: li.id,
@@ -290,11 +304,13 @@ function mapInvoice(i: ApiInvoice): Invoice {
 }
 
 export async function fetchDashboardKpis(): Promise<DashboardKpi[]> {
-  return apiFetch<ApiDashboardKpi[]>('/api/dashboard/kpis')
+  const path = '/api/dashboard/kpis'
+  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiDashboardKpi[]>(path))
 }
 
 export async function fetchLowStock(): Promise<LowStockItem[]> {
-  const items = await apiFetch<ApiLowStockItem[]>('/api/dashboard/low-stock')
+  const path = '/api/dashboard/low-stock'
+  const items = await cachedFetch(buildCacheKey(path), () => apiFetch<ApiLowStockItem[]>(path))
   return items.map((item) => ({
     id: item.id,
     name: item.name,
@@ -306,31 +322,39 @@ export async function fetchLowStock(): Promise<LowStockItem[]> {
 }
 
 export async function fetchActivity(limit = 20): Promise<ActivityItem[]> {
-  return apiFetch<ActivityItem[]>(`/api/dashboard/activity?limit=${limit}`)
+  const path = `/api/dashboard/activity?limit=${limit}`
+  return cachedFetch(buildCacheKey(path), () => apiFetch<ActivityItem[]>(path))
 }
 
 export async function fetchProducts(params?: {
   q?: string
   category?: string
+  status?: ProductStatus
   page?: number
   pageSize?: number
 }, signal?: AbortSignal): Promise<PagedResponse<Product>> {
   const search = new URLSearchParams()
   if (params?.q) search.set('q', params.q)
   if (params?.category) search.set('category', params.category)
+  if (params?.status) search.set('status', params.status)
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiProduct>>(`/api/products${query ? `?${query}` : ''}`, { signal })
+  const url = `/api/products${query ? `?${query}` : ''}`
+  const data = await cachedFetch(buildCacheKey(url), () =>
+    apiFetch<PagedResponse<ApiProduct>>(url, { signal }),
+  )
   return { ...data, items: data.items.map(mapProduct) }
 }
 
 export async function fetchProductStats(): Promise<ApiProductStats> {
-  return apiFetch<ApiProductStats>('/api/products/stats')
+  const path = '/api/products/stats'
+  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiProductStats>(path))
 }
 
 export async function fetchProductCategories(signal?: AbortSignal): Promise<string[]> {
-  return apiFetch<string[]>('/api/products/categories', { signal })
+  const path = '/api/products/categories'
+  return cachedFetch(buildCacheKey(path), () => apiFetch<string[]>(path, { signal }))
 }
 
 export interface CreateProductPayload {
@@ -402,9 +426,10 @@ export async function fetchInventory(
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiInventoryItem>>(`/api/inventory${query ? `?${query}` : ''}`, {
-    signal,
-  })
+  const url = `/api/inventory${query ? `?${query}` : ''}`
+  const data = await cachedFetch(buildCacheKey(url), () =>
+    apiFetch<PagedResponse<ApiInventoryItem>>(url, { signal }),
+  )
   return {
     ...data,
     items: data.items.map((item) => ({
@@ -414,6 +439,7 @@ export async function fetchInventory(
       category: item.category,
       warehouse: item.warehouse,
       quantity: item.quantity,
+      maxStock: item.maxStock,
       unitPrice: item.unitPrice,
       stockLevel: item.stockLevel,
       stockPercent: item.stockPercent,
@@ -427,35 +453,56 @@ export async function fetchInventoryCategories(signal?: AbortSignal): Promise<st
 }
 
 export async function fetchInventoryStats(): Promise<ApiInventoryStats> {
-  return apiFetch<ApiInventoryStats>('/api/inventory/stats')
+  const path = '/api/inventory/stats'
+  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiInventoryStats>(path))
 }
 
-export async function fetchStockMovements(limit = 20): Promise<StockMovement[]> {
+export async function fetchStockMovements(params?: {
+  page?: number
+  pageSize?: number
+}): Promise<PagedResponse<StockMovement>> {
+  const search = new URLSearchParams()
+  search.set('page', String(params?.page ?? 1))
+  search.set('pageSize', String(params?.pageSize ?? 20))
   const data = await apiFetch<PagedResponse<ApiStockMovement>>(
-    `/api/inventory/movements?page=1&pageSize=${limit}`,
+    `/api/inventory/movements?${search.toString()}`,
   )
-  return data.items.map((m) => ({
-    id: m.id,
-    type: m.type,
-    sku: m.sku,
-    change: m.change,
-    timestamp: m.timestamp,
-    detail: m.detail,
-  }))
+  return {
+    ...data,
+    items: data.items.map((m) => ({
+      id: m.id,
+      type: m.type,
+      sku: m.sku,
+      change: m.change,
+      timestamp: m.timestamp,
+      detail: m.detail,
+    })),
+  }
 }
 
 export interface CreateInventoryAdjustmentPayload {
   productId?: string
   productCode?: string
   quantityChange: number
+  maxStock?: number
   reason: string
   detail?: string
 }
 
+export interface InventoryAdjustmentResult extends StockMovement {
+  resultingStock: number
+  maxStock: number
+  stockCapped: boolean
+}
+
 export async function createInventoryAdjustment(
   payload: CreateInventoryAdjustmentPayload,
-): Promise<StockMovement> {
-  const data = await apiFetch<ApiStockMovement>('/api/inventory/adjustments', {
+): Promise<InventoryAdjustmentResult> {
+  const data = await apiFetch<ApiStockMovement & {
+    resultingStock: number
+    maxStock: number
+    stockCapped: boolean
+  }>('/api/inventory/adjustments', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -466,6 +513,9 @@ export async function createInventoryAdjustment(
     change: data.change,
     timestamp: data.timestamp,
     detail: data.detail,
+    resultingStock: data.resultingStock,
+    maxStock: data.maxStock,
+    stockCapped: data.stockCapped,
   }
 }
 
@@ -485,12 +535,33 @@ export async function fetchSales(params?: {
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiSale>>(`/api/sales${query ? `?${query}` : ''}`)
+  const url = `/api/sales${query ? `?${query}` : ''}`
+  const data = await cachedFetch(buildCacheKey(url), () => apiFetch<PagedResponse<ApiSale>>(url))
   return { ...data, items: data.items.map(mapSale) }
 }
 
-export async function fetchSaleMetrics(): Promise<ApiSaleMetrics> {
-  return apiFetch<ApiSaleMetrics>('/api/sales/metrics')
+export async function fetchSaleMetrics(params?: {
+  from?: string
+  to?: string
+  origin?: string
+  status?: string
+}): Promise<ApiSaleMetrics> {
+  const search = new URLSearchParams()
+  if (params?.from) search.set('from', params.from)
+  if (params?.to) search.set('to', params.to)
+  if (params?.origin) search.set('origin', params.origin)
+  if (params?.status) search.set('status', params.status)
+  const query = search.toString()
+  const url = `/api/sales/metrics${query ? `?${query}` : ''}`
+  return cachedFetch(buildCacheKey(url), () => apiFetch<ApiSaleMetrics>(url))
+}
+
+export async function createManualSale(payload: CreateManualSalePayload): Promise<Sale> {
+  const data = await apiFetch<ApiSale>('/api/sales', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return mapSale(data)
 }
 
 export async function createSaleInvoice(saleId: string): Promise<Invoice> {
@@ -510,12 +581,14 @@ export async function fetchInvoices(params?: {
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
   if (params?.status) search.set('status', params.status)
   const query = search.toString()
-  const data = await apiFetch<PagedResponse<ApiInvoice>>(`/api/invoices${query ? `?${query}` : ''}`)
+  const url = `/api/invoices${query ? `?${query}` : ''}`
+  const data = await cachedFetch(buildCacheKey(url), () => apiFetch<PagedResponse<ApiInvoice>>(url))
   return { ...data, items: data.items.map(mapInvoice) }
 }
 
 export async function fetchInvoiceStats(): Promise<ApiInvoiceStats> {
-  return apiFetch<ApiInvoiceStats>('/api/invoices/stats')
+  const path = '/api/invoices/stats'
+  return cachedFetch(buildCacheKey(path), () => apiFetch<ApiInvoiceStats>(path))
 }
 
 export async function fetchInvoicePdf(invoiceId: string): Promise<{ blob: Blob; filename: string }> {
@@ -530,8 +603,8 @@ export async function fetchInvoicePdf(invoiceId: string): Promise<{ blob: Blob; 
   })
 
   if (!response.ok) {
-    const message = sanitizeApiErrorMessage((await response.text()) || response.statusText)
-    throw new ApiError(message, response.status)
+    const raw = (await response.text()) || response.statusText
+    throw buildApiError(raw, response.status)
   }
 
   const blob = await response.blob()
@@ -691,4 +764,91 @@ export function getLatestChatStateFromHistory(history: ChatHistoryMessage[]): {
   }
 
   return { chatState: 'idle', operationSummary: null }
+}
+
+interface ApiNotification {
+  id: string
+  title: string
+  message: string
+  type: string
+  saleId?: string
+  isRead: boolean
+  createdAt: string
+}
+
+interface ApiNotificationList {
+  unreadCount: number
+  items: ApiNotification[]
+}
+
+export async function fetchDispatchOrders(params?: {
+  page?: number
+  pageSize?: number
+  fulfillmentStatus?: string
+}): Promise<PagedResponse<Sale>> {
+  const query = new URLSearchParams()
+  if (params?.page) query.set('page', String(params.page))
+  if (params?.pageSize) query.set('pageSize', String(params.pageSize))
+  if (params?.fulfillmentStatus) query.set('fulfillmentStatus', params.fulfillmentStatus)
+
+  const url = `/api/dispatch?${query.toString()}`
+  const result = await apiFetch<PagedResponse<ApiSale>>(url)
+  return { ...result, items: result.items.map(mapSale) }
+}
+
+export async function updateDispatchStatus(
+  saleId: string,
+  status: 'preparing' | 'shipped' | 'delivered',
+): Promise<Sale> {
+  const result = await apiFetch<ApiSale>(`/api/dispatch/${saleId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+  return mapSale(result)
+}
+
+export async function fetchMyOrders(params?: {
+  page?: number
+  pageSize?: number
+  fulfillmentStatus?: string
+}): Promise<PagedResponse<Sale>> {
+  const query = new URLSearchParams()
+  if (params?.page) query.set('page', String(params.page))
+  if (params?.pageSize) query.set('pageSize', String(params.pageSize))
+  if (params?.fulfillmentStatus) query.set('fulfillmentStatus', params.fulfillmentStatus)
+
+  const result = await apiFetch<PagedResponse<ApiSale>>(`/api/my/orders?${query.toString()}`)
+  return { ...result, items: result.items.map(mapSale) }
+}
+
+export async function confirmOrderDelivery(saleId: string): Promise<Sale> {
+  const result = await apiFetch<ApiSale>(`/api/my/orders/${saleId}/confirm-delivery`, {
+    method: 'POST',
+  })
+  return mapSale(result)
+}
+
+function mapNotification(n: ApiNotification): AppNotification {
+  return {
+    id: n.id,
+    title: n.title,
+    message: n.message,
+    type: n.type,
+    saleId: n.saleId,
+    isRead: n.isRead,
+    createdAt: n.createdAt,
+  }
+}
+
+export async function fetchNotifications(): Promise<NotificationList> {
+  const path = '/api/notifications'
+  const result = await cachedFetch(buildCacheKey(path), () => apiFetch<ApiNotificationList>(path))
+  return {
+    unreadCount: result.unreadCount ?? 0,
+    items: (result.items ?? []).map(mapNotification),
+  }
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await apiFetch(`/api/notifications/${id}/read`, { method: 'PATCH' })
 }

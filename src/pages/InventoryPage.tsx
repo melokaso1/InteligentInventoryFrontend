@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { InventoryItem } from '../types'
-import { ApiError } from '../api/client'
+import { getUserFacingApiError } from '../api/client'
 import {
   createInventoryAdjustment,
   fetchInventory,
@@ -24,6 +24,9 @@ import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import type { StockMovement } from '../types'
 import { useToast } from '../hooks/useToast'
+import { formatSecondsSince, useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { notifyDataMutation } from '../utils/dataSync'
+import { StockStatusHelpCard } from '../components/inventory/StockStatusHelpCard'
 
 const stockLevelBadge: Record<string, string> = {
   high: 'bg-primary/10 text-primary border border-primary/20',
@@ -48,6 +51,7 @@ const stockLevelOptions = [
 ] as const
 
 const PAGE_SIZE = 15
+const MOVEMENTS_PAGE_SIZE = 10
 
 const ADJUSTMENT_REASONS = [
   'Corrección manual',
@@ -60,11 +64,34 @@ const DEFAULT_ADJUSTMENT_REASON = ADJUSTMENT_REASONS[0]
 
 const RECEIVE_STOCK_REASON = ADJUSTMENT_REASONS[1]
 
+function clampAdjustmentDelta(
+  currentStock: number,
+  delta: number,
+  maxStock: number,
+): { delta: number; capped: boolean } {
+  if (!Number.isFinite(maxStock) || maxStock <= 0) {
+    return { delta: Math.max(-currentStock, delta), capped: false }
+  }
+
+  const resulting = currentStock + delta
+  if (resulting > maxStock) {
+    return { delta: maxStock - currentStock, capped: true }
+  }
+
+  if (resulting < 0) {
+    return { delta: -currentStock, capped: delta !== -currentStock }
+  }
+
+  return { delta, capped: false }
+}
+
 export function InventoryPage() {
   const { toastMessage, showToast, dismissToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
+  const [movementsPage, setMovementsPage] = useState(1)
+  const [movementsTotalCount, setMovementsTotalCount] = useState(0)
   const [stats, setStats] = useState({
     totalItems: 0,
     totalUnits: 0,
@@ -85,7 +112,9 @@ export function InventoryPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
   const [detailItem, setDetailItem] = useState<InventoryItem | null>(null)
-  const [quantityChange, setQuantityChange] = useState(0)
+  const [quantityChange, setQuantityChange] = useState('')
+  const [maxStockInput, setMaxStockInput] = useState('')
+  const [quantityHint, setQuantityHint] = useState<string | null>(null)
   const [reason, setReason] = useState<(typeof ADJUSTMENT_REASONS)[number]>(DEFAULT_ADJUSTMENT_REASON)
   const [adjustProductSearch, setAdjustProductSearch] = useState('')
   const [debouncedAdjustProductSearch, setDebouncedAdjustProductSearch] = useState('')
@@ -99,29 +128,37 @@ export function InventoryPage() {
 
   const loadSummary = useCallback(async () => {
     try {
-      const [statsResult, movements] = await Promise.all([
+      const [statsResult, movementsResult] = await Promise.all([
         fetchInventoryStats(),
-        fetchStockMovements(10),
+        fetchStockMovements({ page: movementsPage, pageSize: MOVEMENTS_PAGE_SIZE }),
       ])
       setStats(statsResult)
-      setStockMovements(movements)
+      setStockMovements(movementsResult.items)
+      setMovementsTotalCount(movementsResult.totalCount)
     } catch {
       // KPIs and movements stay at current values if the summary request fails.
     }
-  }, [])
+  }, [movementsPage])
 
-  const reloadInventoryTable = useCallback(async () => {
+  const reloadInventoryTable = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++inventoryRequestId.current
     try {
-      const inventoryResult = await fetchInventory({
-        q: debouncedSearch || undefined,
-        category: categoryFilter || undefined,
-        stockLevel: stockLevelFilter || undefined,
-        page,
-        pageSize: PAGE_SIZE,
-      })
+      const inventoryResult = await fetchInventory(
+        {
+          q: debouncedSearch || undefined,
+          category: categoryFilter || undefined,
+          stockLevel: stockLevelFilter || undefined,
+          page,
+          pageSize: PAGE_SIZE,
+        },
+        signal,
+      )
+      if (requestId !== inventoryRequestId.current) return
       setInventoryItems(inventoryResult.items)
       setTotalCount(inventoryResult.totalCount)
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (requestId !== inventoryRequestId.current) return
       // Keep current rows if a refresh fails.
     }
   }, [debouncedSearch, categoryFilter, stockLevelFilter, page])
@@ -160,73 +197,35 @@ export function InventoryPage() {
     }
   }, [])
 
+  const refreshLiveData = useCallback(async () => {
+    await Promise.all([loadSummary(), reloadInventoryTable()])
+  }, [loadSummary, reloadInventoryTable])
+
   useEffect(() => {
     void loadSummary()
   }, [loadSummary])
 
-  useEffect(() => {
-    const POLL_INTERVAL_MS = 30_000
-
-    const refreshLiveData = () => {
-      void loadSummary()
-      void reloadInventoryTable()
-    }
-
-    const interval = window.setInterval(refreshLiveData, POLL_INTERVAL_MS)
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        refreshLiveData()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    return () => {
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [loadSummary, reloadInventoryTable])
+  const { secondsSinceUpdate } = useRealtimeRefresh(refreshLiveData, [refreshLiveData], {
+    intervalMs: 5_000,
+    scope: ['inventory', 'sales', 'products', 'invoices'],
+  })
 
   useEffect(() => {
     const controller = new AbortController()
-    const requestId = ++inventoryRequestId.current
+    if (!isInitialLoad.current) setRefreshing(true)
 
-    async function loadInventory() {
-      if (!isInitialLoad.current) setRefreshing(true)
-
-      try {
-        const inventoryResult = await fetchInventory(
-          {
-            q: debouncedSearch || undefined,
-            category: categoryFilter || undefined,
-            stockLevel: stockLevelFilter || undefined,
-            page,
-            pageSize: PAGE_SIZE,
-          },
-          controller.signal,
-        )
-        if (requestId !== inventoryRequestId.current) return
-        setInventoryItems(inventoryResult.items)
-        setTotalCount(inventoryResult.totalCount)
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        if (requestId !== inventoryRequestId.current) return
-        // Keep current rows if a non-abort error occurs.
-      } finally {
-        if (requestId !== inventoryRequestId.current) return
-        if (isInitialLoad.current) {
-          isInitialLoad.current = false
-          setLoading(false)
-        }
-        setRefreshing(false)
+    void reloadInventoryTable(controller.signal).finally(() => {
+      if (isInitialLoad.current) {
+        isInitialLoad.current = false
+        setLoading(false)
       }
-    }
+      setRefreshing(false)
+    })
 
-    void loadInventory()
     return () => {
       controller.abort()
     }
-  }, [debouncedSearch, categoryFilter, stockLevelFilter, page])
+  }, [reloadInventoryTable])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -290,6 +289,11 @@ export function InventoryPage() {
   const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
 
+  const movementsTotalPages = Math.max(1, Math.ceil(movementsTotalCount / MOVEMENTS_PAGE_SIZE))
+  const movementsRangeStart =
+    movementsTotalCount === 0 ? 0 : (movementsPage - 1) * MOVEMENTS_PAGE_SIZE + 1
+  const movementsRangeEnd = Math.min(movementsPage * MOVEMENTS_PAGE_SIZE, movementsTotalCount)
+
   const inventoryKpis = [
     {
       label: 'Total de SKU',
@@ -301,7 +305,7 @@ export function InventoryPage() {
     {
       label: 'Valor total del inventario',
       value: formatCOPCompact(stats.totalValue),
-      change: 'Tiempo real',
+      change: formatSecondsSince(secondsSinceUpdate),
       note: 'Valor estimado de mercado del stock',
       icon: 'payments',
     },
@@ -319,7 +323,9 @@ export function InventoryPage() {
     if (submitting) return
     setModalOpen(false)
     setSelectedItem(null)
-    setQuantityChange(0)
+    setQuantityChange('')
+    setMaxStockInput('')
+    setQuantityHint(null)
     setReason(DEFAULT_ADJUSTMENT_REASON)
     setAdjustProductSearch('')
     setDebouncedAdjustProductSearch('')
@@ -333,7 +339,13 @@ export function InventoryPage() {
     options?: { reason?: (typeof ADJUSTMENT_REASONS)[number]; quantityChange?: number },
   ) => {
     setSelectedItem(item ?? null)
-    setQuantityChange(options?.quantityChange ?? 0)
+    setQuantityChange(
+      options?.quantityChange !== undefined && options.quantityChange !== 0
+        ? String(options.quantityChange)
+        : '',
+    )
+    setMaxStockInput(item ? String(item.maxStock) : '')
+    setQuantityHint(null)
     setReason(options?.reason ?? DEFAULT_ADJUSTMENT_REASON)
     setAdjustProductSearch(item ? `${item.name} (${item.sku})` : '')
     setDebouncedAdjustProductSearch('')
@@ -386,7 +398,9 @@ export function InventoryPage() {
     setSelectedItem(item)
     setAdjustProductSearch(`${item.name} (${item.sku})`)
     setAdjustProductDropdownOpen(false)
-    setQuantityChange(0)
+    setQuantityChange('')
+    setMaxStockInput(String(item.maxStock))
+    setQuantityHint(null)
     setFormError(null)
   }
 
@@ -405,12 +419,79 @@ export function InventoryPage() {
     setDetailItem(null)
   }
 
+  const clampQuantityToMax = useCallback(() => {
+    if (!selectedItem) return
+
+    const trimmedQty = quantityChange.trim()
+    if (trimmedQty === '') {
+      setQuantityHint(null)
+      return
+    }
+
+    const parsedQty = Number(trimmedQty)
+    const parsedMaxStock = Number(maxStockInput.trim())
+    if (!Number.isFinite(parsedQty) || !Number.isFinite(parsedMaxStock) || parsedMaxStock < 0) {
+      return
+    }
+
+    const { delta, capped } = clampAdjustmentDelta(
+      selectedItem.quantity,
+      parsedQty,
+      parsedMaxStock,
+    )
+    if (capped) {
+      setQuantityChange(String(delta))
+      setQuantityHint(
+        `La cantidad se ajustó al límite máximo (${parsedMaxStock.toLocaleString('es-CO')} uds.).`,
+      )
+    } else {
+      setQuantityHint(null)
+    }
+  }, [selectedItem, quantityChange, maxStockInput])
+
   const handleApplyAdjustment = async () => {
     if (!selectedItem) {
       setFormError('Selecciona un producto.')
       return
     }
-    if (quantityChange === 0) {
+
+    const trimmedMaxStock = maxStockInput.trim()
+    const parsedMaxStock = Number(trimmedMaxStock)
+    if (trimmedMaxStock === '' || !Number.isFinite(parsedMaxStock) || parsedMaxStock < 0) {
+      setFormError('Ingresa un límite máximo válido.')
+      return
+    }
+
+    const maxStockChanged = parsedMaxStock !== selectedItem.maxStock
+    const needsCapOnlyFix = selectedItem.quantity > parsedMaxStock
+    const trimmedQty = quantityChange.trim()
+    let parsedQty = 0
+
+    if (trimmedQty !== '') {
+      const rawQty = Number(trimmedQty)
+      if (!Number.isFinite(rawQty)) {
+        setFormError('Ingresa una cantidad válida para el ajuste.')
+        return
+      }
+
+      const { delta, capped } = clampAdjustmentDelta(
+        selectedItem.quantity,
+        rawQty,
+        parsedMaxStock,
+      )
+      parsedQty = delta
+      if (capped) {
+        setQuantityChange(String(delta))
+        setQuantityHint(
+          `La cantidad se ajustó al límite máximo (${parsedMaxStock.toLocaleString('es-CO')} uds.).`,
+        )
+      }
+    } else if (!maxStockChanged && !needsCapOnlyFix) {
+      setFormError('Ingresa una cantidad válida para el ajuste.')
+      return
+    }
+
+    if (parsedQty === 0 && !maxStockChanged && !needsCapOnlyFix) {
       setFormError('La cantidad del ajuste no puede ser cero.')
       return
     }
@@ -418,16 +499,24 @@ export function InventoryPage() {
     setFormError(null)
     setSubmitting(true)
     try {
-      await createInventoryAdjustment({
+      const result = await createInventoryAdjustment({
         productId: selectedItem.id,
-        quantityChange,
+        quantityChange: parsedQty,
+        maxStock: parsedMaxStock,
         reason,
       })
       await reloadAfterAdjustment()
+      notifyDataMutation('inventory')
       closeModal()
-      showToast('Ajuste de stock aplicado correctamente.')
+      if (result.stockCapped) {
+        showToast(
+          `Stock ajustado al límite máximo (${result.maxStock.toLocaleString('es-CO')} uds.).`,
+        )
+      } else {
+        showToast('Ajuste de stock aplicado correctamente.')
+      }
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'No se pudo aplicar el ajuste.')
+      setFormError(getUserFacingApiError(err, 'No se pudo aplicar el ajuste.'))
     } finally {
       setSubmitting(false)
     }
@@ -524,33 +613,39 @@ export function InventoryPage() {
                 </option>
               ))}
             </Select>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded border border-outline px-4 py-2 text-sm font-bold text-on-surface transition-colors hover:bg-surface-variant"
-            >
-              <Icon name="download" size={16} />
-              Exportar
-            </button>
           </div>
+          <StockStatusHelpCard />
 
           <div className={`min-w-0 max-w-full overflow-x-auto ${refreshing ? 'opacity-60' : ''}`}>
             <table className="w-full min-w-[720px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-outline-variant bg-surface-container-high/50">
-                  {['Nombre del producto', 'SKU', 'Categoría', 'En stock', 'Estado', 'Precio unitario', 'Acciones'].map(
-                    (col, i) => (
+                  {(
+                    [
+                      { label: 'Nombre del producto', align: '' },
+                      { label: 'SKU', align: '', hidden: 'md' },
+                      { label: 'Categoría', align: '' },
+                      { label: 'En stock', align: 'text-right' },
+                      {
+                        label: 'Estado',
+                        align: '',
+                        title:
+                          'Nivel según stock actual vs. capacidad máxima: Crítico ≤10%, Bajo ≤30%, Medio ≤70%, Alto >70%',
+                      },
+                      { label: 'Precio unitario', align: 'text-right' },
+                      { label: 'Acciones', align: 'text-center' },
+                    ] as const
+                  ).map((col) => (
                       <th
-                        key={col}
+                        key={col.label}
+                        title={'title' in col ? col.title : undefined}
                         className={`px-gutter py-3 font-label-md text-[10px] uppercase tracking-wider text-on-surface-variant ${
-                          col === 'SKU' ? 'hidden whitespace-nowrap md:table-cell' : ''
-                        } ${
-                          i === 3 || i === 5 ? 'text-right' : i === 6 ? 'text-center' : ''
-                        }`}
+                          col.label === 'SKU' ? 'hidden whitespace-nowrap md:table-cell' : ''
+                        } ${col.align}`}
                       >
-                        {col}
+                        {col.label}
                       </th>
-                    ),
-                  )}
+                    ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/30 text-on-surface">
@@ -581,7 +676,15 @@ export function InventoryPage() {
                       </span>
                     </td>
                     <td className="px-gutter py-4 font-body-sm text-body-sm text-on-surface">{row.category}</td>
-                    <td className="px-gutter py-4 text-right font-body-sm text-body-sm">{row.quantity}</td>
+                    <td className="px-gutter py-4 text-right font-body-sm text-body-sm">
+                      <span className="font-semibold text-on-surface">
+                        {row.quantity.toLocaleString('es-CO')}
+                      </span>
+                      <span className="text-on-surface-variant">
+                        {' '}
+                        / {row.maxStock.toLocaleString('es-CO')} uds.
+                      </span>
+                    </td>
                     <td className="px-gutter py-4">
                       <span
                         className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-tighter ${stockLevelBadge[row.stockLevel]}`}
@@ -700,6 +803,55 @@ export function InventoryPage() {
               ))
             )}
           </div>
+          {movementsTotalCount > 0 && (
+            <div className="border-t border-outline-variant px-lg pb-lg pt-md">
+              <div className="flex flex-col gap-md sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-body-sm text-on-surface-variant">
+                  Mostrando {movementsRangeStart}-{movementsRangeEnd} de {movementsTotalCount}
+                </p>
+                {movementsTotalPages > 1 && (
+                  <div className="flex items-center justify-between gap-md sm:justify-end">
+                    <div className="flex gap-xs">
+                      {Array.from({ length: movementsTotalPages }, (_, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          aria-label={`Página ${i + 1}`}
+                          aria-current={i + 1 === movementsPage ? 'page' : undefined}
+                          onClick={() => setMovementsPage(i + 1)}
+                          className={`h-2 rounded-full transition-all ${
+                            i + 1 === movementsPage
+                              ? 'w-6 bg-primary'
+                              : 'w-2 bg-outline-variant hover:bg-primary/50'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex gap-xs">
+                      <button
+                        type="button"
+                        aria-label="Anterior"
+                        disabled={movementsPage <= 1}
+                        onClick={() => setMovementsPage((p) => Math.max(1, p - 1))}
+                        className="rounded-lg border border-outline-variant p-xs text-on-surface-variant transition-colors hover:bg-surface-container disabled:opacity-40"
+                      >
+                        <Icon name="chevron_left" size={20} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Siguiente"
+                        disabled={movementsPage >= movementsTotalPages}
+                        onClick={() => setMovementsPage((p) => Math.min(movementsTotalPages, p + 1))}
+                        className="rounded-lg border border-outline-variant p-xs text-on-surface-variant transition-colors hover:bg-surface-container disabled:opacity-40"
+                      >
+                        <Icon name="chevron_right" size={20} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -782,10 +934,47 @@ export function InventoryPage() {
               )}
             </div>
             {selectedItem && (
-              <p className="mt-2 font-body-sm text-body-sm text-on-surface-variant">
-                Cantidad actual: <span className="font-bold text-on-surface">{selectedItem.quantity}</span>
-              </p>
+              <div className="mt-2 space-y-1 font-body-sm text-body-sm text-on-surface-variant">
+                <p>
+                  Stock actual:{' '}
+                  <span className="font-bold text-on-surface">
+                    {selectedItem.quantity.toLocaleString('es-CO')} uds.
+                  </span>
+                </p>
+                <p>
+                  Límite máximo actual:{' '}
+                  <span className="font-bold text-on-surface">
+                    {selectedItem.maxStock.toLocaleString('es-CO')} uds.
+                  </span>
+                </p>
+                {selectedItem.quantity > Number(maxStockInput) &&
+                  Number.isFinite(Number(maxStockInput)) &&
+                  Number(maxStockInput) > 0 && (
+                    <p className="text-xs text-primary">
+                      El stock supera el límite. Al aplicar, se ajustará automáticamente.
+                    </p>
+                  )}
+              </div>
             )}
+          </div>
+          <div>
+            <label className="text-xs font-semibold uppercase text-on-surface-variant">
+              Límite máximo
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={maxStockInput}
+              onChange={(e) => {
+                setMaxStockInput(e.target.value)
+                setQuantityHint(null)
+              }}
+              onBlur={clampQuantityToMax}
+              className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <p className="mt-1 text-xs text-on-surface-variant">
+              Capacidad máxima de almacenamiento para este producto.
+            </p>
           </div>
           <div>
             <label className="text-xs font-semibold uppercase text-on-surface-variant">
@@ -794,12 +983,17 @@ export function InventoryPage() {
             <input
               type="number"
               value={quantityChange}
-              onChange={(e) => setQuantityChange(Number(e.target.value))}
+              onChange={(e) => {
+                setQuantityChange(e.target.value)
+                setQuantityHint(null)
+              }}
+              onBlur={clampQuantityToMax}
               className="mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
             />
             <p className="mt-1 text-xs text-on-surface-variant">
               Usa valores positivos para entradas y negativos para salidas.
             </p>
+            {quantityHint && <p className="mt-1 text-xs text-primary">{quantityHint}</p>}
           </div>
           <div>
             <label className="text-xs font-semibold uppercase text-on-surface-variant">Motivo</label>
@@ -841,7 +1035,8 @@ export function InventoryPage() {
               { label: 'SKU', value: detailItem.sku },
               { label: 'Categoría', value: detailItem.category },
               { label: 'Almacén', value: detailItem.warehouse },
-              { label: 'Cantidad', value: detailItem.quantity.toLocaleString('es-CO') },
+              { label: 'Stock actual', value: `${detailItem.quantity.toLocaleString('es-CO')} uds.` },
+              { label: 'Límite máximo', value: `${detailItem.maxStock.toLocaleString('es-CO')} uds.` },
               {
                 label: 'Nivel de stock',
                 value: stockLevelLabels[detailItem.stockLevel] ?? detailItem.stockLevel,

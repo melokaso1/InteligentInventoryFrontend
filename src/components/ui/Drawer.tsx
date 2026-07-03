@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useOverlayLock } from '../../hooks/useOverlayLock'
 import { Icon } from './Icon'
 
 interface DrawerProps {
@@ -20,6 +21,8 @@ export function Drawer({
   footer,
   width = '450px',
 }: DrawerProps) {
+  useOverlayLock(open)
+
   return (
     <div
       className={`fixed inset-0 z-[100] transition-all duration-300 ${

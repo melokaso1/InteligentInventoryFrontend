@@ -1,19 +1,9 @@
 import type { ReactNode } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { SidebarProvider } from '../../hooks/useSidebar'
+import { ChatFab, useChatFabVisible } from './ChatFab'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
-
-const searchPlaceholders: Record<string, string> = {
-  '/': 'Buscar datos...',
-  '/products': 'Buscar en catálogo...',
-  '/inventory': 'Buscar SKU o producto...',
-  '/sales': 'Buscar ventas, clientes o artículos...',
-  '/invoices': 'Buscar por nº de factura...',
-  '/chatbot': 'Buscar pedidos, inventario...',
-  '/reports': 'Buscar informes...',
-  '/support': 'Buscar en ayuda...',
-}
 
 interface AppLayoutContentProps {
   children?: ReactNode
@@ -21,22 +11,22 @@ interface AppLayoutContentProps {
 
 function AppLayoutContent({ children }: AppLayoutContentProps) {
   const location = useLocation()
-  const placeholder = searchPlaceholders[location.pathname] ?? 'Buscar datos...'
   const isInvoices = location.pathname === '/invoices'
   const isChatbot = location.pathname === '/chatbot'
+  const chatFabVisible = useChatFabVisible()
   const pageContent = children ?? <Outlet />
 
   return (
     <div className="min-h-screen min-w-0 max-w-full overflow-x-hidden bg-background font-body-md text-on-surface antialiased">
       <Sidebar />
-      <Header searchPlaceholder={placeholder} />
+      <Header />
       <main
         className={`min-w-0 max-w-full min-h-[calc(100vh-4rem)] lg:ml-sidebar-width ${
           isInvoices
             ? 'flex min-h-[calc(100vh-4rem)] flex-col overflow-x-hidden overflow-y-auto p-0 lg:h-[calc(100vh-4rem)] lg:overflow-hidden'
             : isChatbot
               ? 'flex h-[calc(100vh-4rem)] flex-col overflow-x-hidden overflow-hidden p-0'
-              : 'overflow-x-hidden p-md md:p-xl'
+              : `overflow-x-hidden p-md md:p-xl${chatFabVisible ? ' pb-20 pr-20 sm:pr-24' : ''}`
         }`}
       >
         {isInvoices || isChatbot ? (
@@ -47,6 +37,7 @@ function AppLayoutContent({ children }: AppLayoutContentProps) {
           </div>
         )}
       </main>
+      <ChatFab />
     </div>
   )
 }

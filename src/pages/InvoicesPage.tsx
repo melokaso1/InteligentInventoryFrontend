@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { Invoice } from '../types'
 import { fetchInvoicePdf, fetchInvoices, fetchInvoiceStats, payInvoice } from '../api'
-import { CreateManualInvoiceDrawer } from '../components/invoices/CreateManualInvoiceDrawer'
+import { getUserFacingApiError } from '../api/client'
 import { canPayInvoice, PayInvoiceModal, type PaymentMethod } from '../components/invoices/PayInvoiceModal'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
@@ -13,10 +13,12 @@ import {
   PaginationIconButton,
   PaginationInfo,
 } from '../components/ui/Pagination'
-import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { Toast } from '../components/ui/Toast'
 import { useToast } from '../hooks/useToast'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { useOverlayLock } from '../hooks/useOverlayLock'
+import { notifyDataMutation } from '../utils/dataSync'
 
 const keyStatLabels = new Set(['Cuentas por cobrar', 'Importe vencido'])
 
@@ -64,12 +66,14 @@ function InvoicePreviewPanel({
   onClose,
   onDownloadSuccess,
   onPay,
+  onSend,
   paying,
 }: {
   selected: Invoice
   onClose: () => void
   onDownloadSuccess?: (filename: string) => void
   onPay?: () => void
+  onSend?: () => void
   paying?: boolean
 }) {
   const previewRef = useRef<HTMLDivElement>(null)
@@ -88,7 +92,7 @@ function InvoicePreviewPanel({
       downloadBlob(blob, downloadName)
       onDownloadSuccess?.(downloadName)
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo descargar la factura.')
+      setActionError(getUserFacingApiError(err, 'No se pudo descargar la factura.'))
     } finally {
       setDownloadLoading(false)
     }
@@ -108,15 +112,29 @@ function InvoicePreviewPanel({
 <html lang="es">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Factura ${selected.id.slice(0, 8).toUpperCase()}</title>
   <style>
-    body { font-family: system-ui, sans-serif; color: #1a1a1a; padding: 2rem; }
-    table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
-    th, td { padding: 0.5rem 0; border-bottom: 1px solid #ddd; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      color: #1a1a1a;
+      margin: 0;
+      padding: 1.25rem;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; table-layout: fixed; }
+    th, td { padding: 0.5rem 0.25rem; border-bottom: 1px solid #ddd; overflow-wrap: anywhere; }
     th { text-align: left; color: #666; font-weight: 600; }
     .totals { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #ddd; }
     .totals div { display: flex; justify-content: space-between; margin: 0.25rem 0; }
     .total-row { font-weight: bold; font-size: 1.1rem; }
+    @media print {
+      @page { margin: 1.5cm; }
+      body { padding: 0; }
+    }
   </style>
 </head>
 <body>${preview.innerHTML}</body>
@@ -128,12 +146,12 @@ function InvoicePreviewPanel({
   }
 
   const handleSend = () => {
-    alert('Función de envío simulada')
+    onSend?.()
   }
 
   return (
-    <>
-      <div className="flex shrink-0 items-center justify-between border-b border-outline-variant px-lg py-md">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between border-b border-outline-variant px-md py-md md:px-lg">
         <h4 className="font-headline-sm text-headline-sm text-on-surface">Vista previa</h4>
         <button
           type="button"
@@ -144,13 +162,13 @@ function InvoicePreviewPanel({
           <Icon name="close" />
         </button>
       </div>
-      <div className="flex flex-1 flex-col gap-lg overflow-y-auto p-lg pb-lg">
+      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-md md:p-lg">
         <div
           ref={previewRef}
-          className="invoice-preview-canvas rounded-xl border border-outline-variant p-xl pb-xl shadow-sm"
+          className="invoice-preview-canvas rounded-xl border border-outline-variant p-md pb-md shadow-sm md:p-lg md:pb-lg"
         >
-          <div className="mb-xl flex items-start justify-between border-b border-outline-variant pb-md">
-            <div>
+          <div className="mb-lg flex min-w-0 items-start justify-between gap-md border-b border-outline-variant pb-md md:mb-xl">
+            <div className="min-w-0 flex-1">
               <h5 className="text-headline-sm font-bold text-primary">El Plonsazo</h5>
               <p className="text-body-sm text-on-surface-variant">
                 Calle del Plonsazo 420
@@ -163,53 +181,57 @@ function InvoicePreviewPanel({
                 Vencimiento: {formatDate(selected.dueDate)}
               </p>
             </div>
-            <div className="text-right">
+            <div className="shrink-0 text-right">
               <h6 className="font-label-md uppercase tracking-widest text-on-surface-variant">Factura</h6>
               <p className="font-mono-sm font-bold text-on-surface">{selected.id.slice(0, 8).toUpperCase()}</p>
             </div>
           </div>
-          <table className="mb-lg w-full text-body-sm">
-            <thead>
-              <tr className="border-b border-outline-variant text-on-surface-variant">
-                <th className="py-2 text-left">Descripción</th>
-                <th className="py-2 text-center">Cant.</th>
-                <th className="py-2 text-right">Precio</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selected.lineItems.map((item, i) => (
-                <tr key={i} className="border-b border-outline-variant/30">
-                  <td className="py-2 text-on-surface">{item.description}</td>
-                  <td className="py-2 text-center">{item.quantity}</td>
-                  <td className="py-2 text-right font-mono-sm">{formatCOP(item.unitPrice)}</td>
+          <div className="invoice-preview-line-items mb-lg">
+            <table className="w-full min-w-0 text-body-sm">
+              <thead>
+                <tr className="border-b border-outline-variant text-on-surface-variant">
+                  <th className="w-[50%] py-2 text-left">Descripción</th>
+                  <th className="w-[20%] py-2 text-center">Cant.</th>
+                  <th className="w-[30%] py-2 text-right">Precio</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {selected.lineItems.map((item, i) => (
+                  <tr key={i} className="border-b border-outline-variant/30">
+                    <td className="py-2 text-on-surface">{item.description}</td>
+                    <td className="py-2 text-center">{item.quantity}</td>
+                    <td className="whitespace-nowrap py-2 text-right font-mono-sm">{formatCOP(item.unitPrice)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="space-y-sm border-t border-outline-variant pt-md pb-sm text-body-sm">
-            <div className="flex justify-between text-on-surface">
+            <div className="flex justify-between gap-md text-on-surface">
               <span>Subtotal</span>
-              <span className="font-mono-sm">{formatCOP(selected.subtotal)}</span>
+              <span className="shrink-0 font-mono-sm">{formatCOP(selected.subtotal)}</span>
             </div>
-            <div className="flex justify-between text-on-surface">
+            <div className="flex justify-between gap-md text-on-surface">
               <span>Impuestos</span>
-              <span className="font-mono-sm">{formatCOP(selected.tax)}</span>
+              <span className="shrink-0 font-mono-sm">{formatCOP(selected.tax)}</span>
             </div>
-            <div className="flex justify-between font-bold text-headline-sm text-on-surface">
+            <div className="flex justify-between gap-md font-bold text-headline-sm text-on-surface">
               <span>Total</span>
-              <span className="font-mono-sm text-primary">{formatCOP(selected.total)}</span>
+              <span className="shrink-0 font-mono-sm text-primary">{formatCOP(selected.total)}</span>
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 flex-col gap-md pt-sm sm:flex-row sm:flex-wrap">
+      </div>
+      <div className="shrink-0 border-t border-outline-variant p-md pb-[max(1rem,env(safe-area-inset-bottom))] md:p-lg md:pb-lg">
+        <div className="flex flex-col gap-md sm:flex-row sm:flex-wrap">
           {canPayInvoice(selected) && onPay ? (
             <button
               type="button"
               onClick={onPay}
               disabled={paying || downloadLoading}
-              className="flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Icon name="payments" size={16} />
+              <Icon name="payments" size={16} className="shrink-0" />
               {paying ? 'Procesando…' : 'Marcar como pagada'}
             </button>
           ) : null}
@@ -217,37 +239,37 @@ function InvoicePreviewPanel({
             type="button"
             onClick={() => void handleDownload()}
             disabled={downloadLoading}
-            className="flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Icon name="download" size={16} />
+            <Icon name="download" size={16} className="shrink-0" />
             {downloadLoading ? 'Descargando…' : 'Descargar factura'}
           </button>
           <button
             type="button"
             onClick={handlePrint}
             disabled={downloadLoading}
-            className="flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Icon name="print" size={16} />
+            <Icon name="print" size={16} className="shrink-0" />
             Imprimir
           </button>
           <button
             type="button"
             onClick={handleSend}
             disabled={downloadLoading}
-            className="flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Icon name="send" size={16} />
+            <Icon name="send" size={16} className="shrink-0" />
             Enviar factura
           </button>
         </div>
         {actionError ? (
-          <p className="text-body-sm text-error" role="alert">
+          <p className="mt-md text-body-sm text-error" role="alert">
             {actionError}
           </p>
         ) : null}
       </div>
-    </>
+    </div>
   )
 }
 
@@ -260,9 +282,6 @@ export function InvoicesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(false)
-  const [createDrawerOpen, setCreateDrawerOpen] = useState(false)
-  const [creatingInvoice, setCreatingInvoice] = useState(false)
-  const [createFormError, setCreateFormError] = useState<string | null>(null)
   const [rowDownloadId, setRowDownloadId] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null)
@@ -273,23 +292,26 @@ export function InvoicesPage() {
   const [payModalOpen, setPayModalOpen] = useState(false)
   const [payInvoiceTarget, setPayInvoiceTarget] = useState<Invoice | null>(null)
   const [payingId, setPayingId] = useState<string | null>(null)
+  const isInitialLoad = useRef(true)
+
+  const reloadInvoices = useCallback(async () => {
+    const [invoicesResult, statsResult] = await Promise.all([fetchInvoices({ pageSize: 50 }), fetchInvoiceStats()])
+    setInvoices(invoicesResult.items)
+    setTotalCount(invoicesResult.totalCount)
+    setDraftCount(statsResult.draftInvoices)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       try {
-        const [invoicesResult, statsResult] = await Promise.all([
-          fetchInvoices({ pageSize: 50 }),
-          fetchInvoiceStats(),
-        ])
-        if (!cancelled) {
-          setInvoices(invoicesResult.items)
-          setTotalCount(invoicesResult.totalCount)
-          setDraftCount(statsResult.draftInvoices)
-        }
+        if (!cancelled) await reloadInvoices()
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && isInitialLoad.current) {
+          isInitialLoad.current = false
+          setLoading(false)
+        }
       }
     }
 
@@ -297,14 +319,11 @@ export function InvoicesPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadInvoices])
 
-  const reloadInvoices = async () => {
-    const [invoicesResult, statsResult] = await Promise.all([fetchInvoices({ pageSize: 50 }), fetchInvoiceStats()])
-    setInvoices(invoicesResult.items)
-    setTotalCount(invoicesResult.totalCount)
-    setDraftCount(statsResult.draftInvoices)
-  }
+  useRealtimeRefresh(reloadInvoices, [reloadInvoices], { scope: ['invoices', 'sales'] })
+
+  useOverlayLock(previewOpen, 'invoice-preview')
 
   const invoiceStats = useMemo(() => {
     const receivables = invoices
@@ -361,6 +380,7 @@ export function InvoicesPage() {
     setEmailError(null)
     window.location.href = invoiceMailto(to, invoice)
     setEmailModalOpen(false)
+    showToast('Se abrió tu cliente de correo. Adjunta la factura descargada si aún no lo hiciste.')
   }
 
   const showDownloadSuccess = (filename: string) => {
@@ -382,7 +402,7 @@ export function InvoicesPage() {
       downloadBlob(blob, downloadName)
       showDownloadSuccess(downloadName)
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : 'No se pudo descargar la factura.')
+      setDownloadError(getUserFacingApiError(err, 'No se pudo descargar la factura.'))
     } finally {
       setRowDownloadId(null)
     }
@@ -395,27 +415,6 @@ export function InvoicesPage() {
 
   const handleClosePreview = () => {
     setPreviewOpen(false)
-  }
-
-  const openCreateDrawer = () => {
-    setCreateFormError(null)
-    setCreateDrawerOpen(true)
-    setPreviewOpen(false)
-  }
-
-  const closeCreateDrawer = () => {
-    if (creatingInvoice) return
-    setCreateDrawerOpen(false)
-    setCreateFormError(null)
-  }
-
-  const handleManualInvoiceCreated = async (created: Invoice) => {
-    await reloadInvoices()
-    setSelectedId(created.id)
-    setPreviewOpen(true)
-    setCreateDrawerOpen(false)
-    setCreateFormError(null)
-    showToast('Factura creada. Puedes imprimirla desde la vista previa.')
   }
 
   const openPayModal = (invoice: Invoice) => {
@@ -435,8 +434,13 @@ export function InvoicesPage() {
     try {
       await payInvoice(payInvoiceTarget.id, paymentMethod)
       await reloadInvoices()
+      notifyDataMutation('invoices')
+      notifyDataMutation('sales')
+      notifyDataMutation('dashboard')
+      notifyDataMutation('orders')
+      notifyDataMutation('inventory')
       closePayModal()
-      showToast('Factura marcada como pagada.')
+      showToast('Factura marcada como pagada. El pedido pasará a preparación en Despacho.')
     } finally {
       setPayingId(null)
     }
@@ -545,17 +549,7 @@ export function InvoicesPage() {
                 Gestiona y supervisa las operaciones de facturación empresarial.
               </p>
             </div>
-            <PrimaryActionButton size="default" className="shrink-0" onClick={openCreateDrawer} disabled={creatingInvoice}>
-              <span className="md:hidden">NUEVA FACTURA</span>
-              <span className="hidden md:inline">CREAR FACTURA MANUAL</span>
-            </PrimaryActionButton>
           </div>
-
-          {createFormError ? (
-            <p className="rounded-lg border border-error/30 bg-error/10 px-md py-sm text-body-sm text-error" role="alert">
-              {createFormError}
-            </p>
-          ) : null}
 
           {downloadError ? (
             <p className="rounded-lg border border-error/30 bg-error/10 px-md py-sm text-body-sm text-error" role="alert">
@@ -720,7 +714,7 @@ export function InvoicesPage() {
           aria-hidden="true"
         />
         <aside
-          className={`absolute inset-0 flex flex-col bg-surface-container-low shadow-2xl transition-transform duration-300 ease-in-out ${
+          className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-surface-container-low shadow-2xl transition-transform duration-300 ease-in-out ${
             previewOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
         >
@@ -730,6 +724,7 @@ export function InvoicesPage() {
               onClose={handleClosePreview}
               onDownloadSuccess={showDownloadSuccess}
               onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
+              onSend={() => openEmailModal(selected)}
               paying={payingId === selected.id}
             />
           ) : null}
@@ -743,7 +738,7 @@ export function InvoicesPage() {
         aria-hidden={!previewOpen}
       >
         <aside
-          className={`absolute top-0 right-0 flex h-full w-full flex-col bg-surface-container-low transition-transform duration-300 ease-in-out ${
+          className={`absolute top-0 right-0 flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface-container-low transition-transform duration-300 ease-in-out ${
             previewOpen
               ? 'translate-x-0 border-l border-outline-variant'
               : 'pointer-events-none translate-x-full'
@@ -755,20 +750,12 @@ export function InvoicesPage() {
               onClose={handleClosePreview}
               onDownloadSuccess={showDownloadSuccess}
               onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
+              onSend={() => openEmailModal(selected)}
               paying={payingId === selected.id}
             />
           ) : null}
         </aside>
       </div>
-
-      <CreateManualInvoiceDrawer
-        open={createDrawerOpen}
-        creating={creatingInvoice}
-        onClose={closeCreateDrawer}
-        onCreatingChange={setCreatingInvoice}
-        onCreated={(invoice) => void handleManualInvoiceCreated(invoice)}
-        onError={setCreateFormError}
-      />
 
       <Modal
         open={emailModalOpen}

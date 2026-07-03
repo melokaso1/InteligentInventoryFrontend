@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Sale } from '../types'
-import { ApiError } from '../api/client'
+import { getUserFacingApiError, type PagedResponse } from '../api/client'
+import { isCacheFresh, readCache } from '../api/cache'
 import { createSaleInvoice, fetchSales, fetchSaleMetrics } from '../api'
 import { formatCOP } from '../utils/format'
+import { CreateManualSaleDrawer } from '../components/sales/CreateManualSaleDrawer'
 import { DataTable } from '../components/ui/DataTable'
 import { Drawer } from '../components/ui/Drawer'
 import { Icon } from '../components/ui/Icon'
@@ -13,6 +15,15 @@ import { Select } from '../components/ui/Select'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { Toast } from '../components/ui/Toast'
 import { useToast } from '../hooks/useToast'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
+import { notifyDataMutation } from '../utils/dataSync'
+import {
+  DEFAULT_SALES_DATE_PRESET,
+  SALES_DATE_PRESET_LABELS,
+  SALES_DATE_PRESET_OPTIONS,
+  getSalesDateRangeForPreset,
+  type SalesDatePreset,
+} from '../utils/salesDatePresets'
 
 const originLabels: Record<'all' | 'manual' | 'chatbot', string> = {
   all: 'Todos',
@@ -33,46 +44,100 @@ function shortOrderId(id: string) {
   return id.slice(0, 8).toUpperCase()
 }
 
+function buildSalesListCacheKey(fromDate?: string, toDate?: string, origin?: string): string {
+  const search = new URLSearchParams()
+  if (fromDate) search.set('from', fromDate)
+  if (toDate) search.set('to', toDate)
+  if (origin) search.set('origin', origin)
+  search.set('pageSize', '50')
+  return `/api/sales?${search.toString()}`
+}
+
+function buildSalesMetricsCacheKey(fromDate?: string, toDate?: string, origin?: string): string {
+  const search = new URLSearchParams()
+  if (fromDate) search.set('from', fromDate)
+  if (toDate) search.set('to', toDate)
+  if (origin) search.set('origin', origin)
+  return `/api/sales/metrics?${search.toString()}`
+}
+
+const defaultSalesRange = getSalesDateRangeForPreset(DEFAULT_SALES_DATE_PRESET)
+const defaultSalesCacheKey = buildSalesListCacheKey(defaultSalesRange.fromDate, defaultSalesRange.toDate)
+const defaultMetricsCacheKey = buildSalesMetricsCacheKey(
+  defaultSalesRange.fromDate,
+  defaultSalesRange.toDate,
+)
+
 export function SalesPage() {
   const navigate = useNavigate()
   const { toastMessage, showToast, dismissToast } = useToast()
-  const [sales, setSales] = useState<Sale[]>([])
+  const [sales, setSales] = useState<Sale[]>(
+    () => readCache<PagedResponse<Sale>>(defaultSalesCacheKey)?.items ?? [],
+  )
   const [metrics, setMetrics] = useState({
-    totalSales: 0,
-    totalRevenue: 0,
-    chatbotSales: 0,
-    manualSales: 0,
+    totalSales: readCache<{ totalSales: number }>(defaultMetricsCacheKey)?.totalSales ?? 0,
+    totalRevenue: readCache<{ totalRevenue: number }>(defaultMetricsCacheKey)?.totalRevenue ?? 0,
+    chatbotSales: readCache<{ chatbotSales: number }>(defaultMetricsCacheKey)?.chatbotSales ?? 0,
+    manualSales: readCache<{ manualSales: number }>(defaultMetricsCacheKey)?.manualSales ?? 0,
   })
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(
+    () => !isCacheFresh(defaultSalesCacheKey) && !isCacheFresh(defaultMetricsCacheKey),
+  )
   const [selected, setSelected] = useState<Sale | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [originFilter, setOriginFilter] = useState<'all' | 'manual' | 'chatbot'>('all')
+  const [datePreset, setDatePreset] = useState<SalesDatePreset>(DEFAULT_SALES_DATE_PRESET)
   const [generatingId, setGeneratingId] = useState<string | null>(null)
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false)
+  const [creatingSale, setCreatingSale] = useState(false)
+  const [createFormError, setCreateFormError] = useState<string | null>(null)
   const [invoiceFeedback, setInvoiceFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null,
   )
+  const isInitialLoad = useRef(true)
+
+  const dateRange = useMemo(() => getSalesDateRangeForPreset(datePreset), [datePreset])
+  const periodLabel = SALES_DATE_PRESET_LABELS[datePreset]
 
   const loadSales = useCallback(async () => {
+    const { fromDate, toDate } = dateRange
+    const origin = originFilter === 'all' ? undefined : originFilter
     const [salesResult, metricsResult] = await Promise.all([
       fetchSales({
-        origin: originFilter === 'all' ? undefined : originFilter,
+        from: fromDate,
+        to: toDate,
+        origin,
         pageSize: 50,
       }),
-      fetchSaleMetrics(),
+      fetchSaleMetrics({
+        from: fromDate,
+        to: toDate,
+        origin,
+      }),
     ])
     setSales(salesResult.items)
     setMetrics(metricsResult)
-  }, [originFilter])
+  }, [dateRange, originFilter])
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      setLoading(true)
+      if (isInitialLoad.current) {
+        const { fromDate, toDate } = dateRange
+        const origin = originFilter === 'all' ? undefined : originFilter
+        const hasCache =
+          isCacheFresh(buildSalesListCacheKey(fromDate, toDate, origin)) ||
+          isCacheFresh(buildSalesMetricsCacheKey(fromDate, toDate, origin))
+        if (!hasCache) setLoading(true)
+      }
       try {
         if (!cancelled) await loadSales()
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && isInitialLoad.current) {
+          isInitialLoad.current = false
+          setLoading(false)
+        }
       }
     }
 
@@ -80,7 +145,9 @@ export function SalesPage() {
     return () => {
       cancelled = true
     }
-  }, [loadSales])
+  }, [loadSales, dateRange, originFilter])
+
+  useRealtimeRefresh(loadSales, [loadSales], { scope: ['sales', 'invoices'] })
 
   const openDrawer = (sale: Sale) => {
     setInvoiceFeedback(null)
@@ -95,26 +162,49 @@ export function SalesPage() {
     setInvoiceFeedback(null)
     try {
       await createSaleInvoice(sale.id)
+      notifyDataMutation('invoices')
+      notifyDataMutation('sales')
+      notifyDataMutation('inventory')
+      notifyDataMutation('dashboard')
       await loadSales()
       showToast('Factura generada correctamente.')
       setDrawerOpen(false)
       navigate('/invoices')
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'No se pudo generar la factura.'
+      const message = getUserFacingApiError(err, 'No se pudo generar la factura.')
       setInvoiceFeedback({ type: 'error', message })
     } finally {
       setGeneratingId(null)
     }
   }
 
-  const orderCount = sales.length
-  const periodTotal = metrics.totalRevenue
-  const avgTicket = orderCount > 0 ? periodTotal / orderCount : 0
+  const openCreateDrawer = () => {
+    setCreateFormError(null)
+    setCreateDrawerOpen(true)
+    setDrawerOpen(false)
+  }
+
+  const closeCreateDrawer = () => {
+    if (creatingSale) return
+    setCreateDrawerOpen(false)
+    setCreateFormError(null)
+  }
+
+  const handleManualSaleCreated = async (sale: Sale) => {
+    await loadSales()
+    notifyDataMutation('sales')
+    notifyDataMutation('inventory')
+    notifyDataMutation('dashboard')
+    setCreateDrawerOpen(false)
+    setCreateFormError(null)
+    setSelected(sale)
+    setDrawerOpen(true)
+    showToast('Venta creada. Genera la factura cuando el cliente confirme el pedido.')
+  }
+
+  const orderCount = metrics.totalSales
+  const totalRevenue = metrics.totalRevenue
+  const avgTicket = orderCount > 0 ? totalRevenue / orderCount : 0
   const selectedGenerating = selected ? generatingId === selected.id : false
   const selectedAlreadyInvoiced = selected?.status === 'invoiced'
 
@@ -131,16 +221,41 @@ export function SalesPage() {
       <div className="min-w-0 space-y-gutter">
         <Toast message={toastMessage} onDismiss={dismissToast} />
 
+        <div className="flex items-start justify-between gap-sm">
+          <div className="min-w-0">
+            <h3 className="text-headline-sm font-bold text-on-background md:font-display-lg md:text-display-lg">
+              Ventas
+            </h3>
+            <p className="mt-0.5 hidden text-body-sm text-on-surface-variant md:block">
+              Crea pedidos manuales, genera facturas y supervisa el despacho.
+            </p>
+          </div>
+          <PrimaryActionButton className="shrink-0" onClick={openCreateDrawer} disabled={creatingSale}>
+            Nueva venta
+          </PrimaryActionButton>
+        </div>
+
+        {createFormError ? (
+          <p className="rounded-lg border border-error/30 bg-error/10 px-md py-sm text-body-sm text-error" role="alert">
+            {createFormError}
+          </p>
+        ) : null}
+
         <div className="flex min-w-0 max-w-full flex-col gap-md overflow-hidden rounded-xl border border-outline-variant bg-surface p-md shadow-sm md:flex-row md:flex-wrap md:items-end">
             <div className="min-w-0 w-full md:min-w-[200px] md:flex-1">
               <label className="mb-1 block font-label-md text-label-md text-on-surface-variant">
                 Rango de fechas
               </label>
-              <Select className="w-full min-w-0 shrink rounded-lg border border-outline bg-surface-container-lowest py-2.5 pl-3 text-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary md:w-auto">
-                <option>Últimos 30 días</option>
-                <option>Este mes</option>
-                <option>Último trimestre</option>
-                <option>Rango personalizado</option>
+              <Select
+                className="w-full min-w-0 shrink rounded-lg border border-outline bg-surface-container-lowest py-2.5 pl-3 text-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary md:w-auto"
+                value={datePreset}
+                onChange={(event) => setDatePreset(event.target.value as SalesDatePreset)}
+              >
+                {SALES_DATE_PRESET_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </div>
             <div className="min-w-0 w-full md:min-w-[200px] md:flex-1">
@@ -176,16 +291,13 @@ export function SalesPage() {
                 <option>Cancelado</option>
               </Select>
             </div>
-            <PrimaryActionButton icon={false} size="compact" className="w-full font-body-md md:w-auto">
-              Aplicar filtros
-            </PrimaryActionButton>
         </div>
 
         <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2 lg:grid-cols-3">
           <KpiCard
             label="Ventas totales (período)"
-            value={formatCOP(periodTotal)}
-            change={`${metrics.totalSales} pedidos`}
+            value={formatCOP(totalRevenue)}
+            change={`${orderCount} pedidos · ${periodLabel}`}
             changeType="positive"
             icon="payments"
             iconBg="bg-primary-container"
@@ -194,7 +306,7 @@ export function SalesPage() {
           <KpiCard
             label="Pedidos"
             value={orderCount.toLocaleString('es-CO')}
-            change={`${originFilter === 'all' ? 'Todos' : originLabels[originFilter]}`}
+            change={periodLabel}
             changeType="neutral"
             icon="shopping_cart"
             iconBg="bg-tertiary-container"
@@ -203,7 +315,7 @@ export function SalesPage() {
           <KpiCard
             label="Ticket medio"
             value={formatCOP(avgTicket)}
-            change="vs período"
+            change={periodLabel}
             changeType="neutral"
             icon="receipt_long"
             iconBg="bg-secondary-container"
@@ -280,6 +392,14 @@ export function SalesPage() {
                 render: (row) => <StatusBadge variant={row.status} />,
               },
               {
+                key: 'fulfillment',
+                header: 'Despacho',
+                hideOnTablet: true,
+                render: (row) => (
+                  <StatusBadge variant={row.fulfillmentStatus ?? 'preparing'} />
+                ),
+              },
+              {
                 key: 'actions',
                 header: 'Acciones',
                 className: 'text-right',
@@ -296,6 +416,16 @@ export function SalesPage() {
                     >
                       <Icon name="description" />
                     </button>
+                    {row.fulfillmentStatus !== 'delivered' && row.status !== 'cancelled' ? (
+                      <button
+                        type="button"
+                        title="Despachar pedido"
+                        onClick={() => navigate('/dispatch')}
+                        className="rounded-lg p-2 text-primary hover:bg-primary/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                      >
+                        <Icon name="local_shipping" />
+                      </button>
+                    ) : null}
                     {row.status === 'invoiced' ? (
                       <button
                         type="button"
@@ -374,7 +504,24 @@ export function SalesPage() {
                 <p className="text-label-md uppercase text-on-surface-variant">Estado</p>
                 <StatusBadge variant={selected.status} />
               </div>
+              <div>
+                <p className="text-label-md uppercase text-on-surface-variant">Despacho</p>
+                <StatusBadge variant={selected.fulfillmentStatus ?? 'preparing'} />
+              </div>
             </div>
+            {selected.fulfillmentStatus !== 'delivered' && selected.status !== 'cancelled' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawerOpen(false)
+                  navigate('/dispatch')
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary py-2 font-label-md text-label-md text-primary hover:bg-primary/10"
+              >
+                <Icon name="local_shipping" size={18} />
+                Ir a Despacho
+              </button>
+            ) : null}
             <div className="border-t border-outline-variant pt-lg">
               <p className="mb-md font-label-md text-label-md uppercase text-on-surface-variant">Líneas del pedido</p>
               {selected.lineItems.map((item) => (
@@ -412,6 +559,15 @@ export function SalesPage() {
           </div>
         )}
       </Drawer>
+
+      <CreateManualSaleDrawer
+        open={createDrawerOpen}
+        creating={creatingSale}
+        onClose={closeCreateDrawer}
+        onCreatingChange={setCreatingSale}
+        onCreated={(sale) => void handleManualSaleCreated(sale)}
+        onError={setCreateFormError}
+      />
     </>
   )
 }

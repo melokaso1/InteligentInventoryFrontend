@@ -1,14 +1,25 @@
 import { useMemo, useState } from 'react'
 import { fetchInventory, fetchSales } from '../api'
-import { ApiError } from '../api/client'
+import { getUserFacingApiError } from '../api/client'
+import { ReportPreviewModal } from '../components/reports/ReportPreviewModal'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
 import { PrimaryActionButton } from '../components/ui/PrimaryActionButton'
 import { Select } from '../components/ui/Select'
 import { Toast } from '../components/ui/Toast'
 import { useToast } from '../hooks/useToast'
-
-type ReportType = 'ventas' | 'inventario'
+import type { ReportData, ReportType, RecentExport, ReportDatePreset } from '../utils/reports'
+import {
+  DEFAULT_REPORT_DATE_PRESET,
+  REPORT_DATE_PRESET_LABELS,
+  REPORT_TYPE_LABELS,
+  buildInventarioReportData,
+  buildTxtFromReportData,
+  buildVentasReportData,
+  downloadTxtContent,
+  formatGeneratedAt,
+  getReportDateRangeForPreset,
+} from '../utils/reports'
 
 const REPORTS_STATS_KEY = 'elplonsazo-reports-stats'
 const RECENT_EXPORTS_KEY = 'elplonsazo-recent-exports'
@@ -20,15 +31,7 @@ interface ReportsStats {
   monthKey: string
 }
 
-export interface RecentExport {
-  id: string
-  name: string
-  type: ReportType
-  date: string
-  filename: string
-  content: string
-  archived?: boolean
-}
+export type { RecentExport } from '../utils/reports'
 
 function currentMonthKey(): string {
   const now = new Date()
@@ -56,15 +59,30 @@ function saveReportsStats(stats: ReportsStats): void {
   localStorage.setItem(REPORTS_STATS_KEY, JSON.stringify(stats))
 }
 
+function sanitizeFilename(name: string): string {
+  return name.trim().replace(/[^\p{L}\p{N}\-_]+/gu, '-').replace(/-+/g, '-').slice(0, 60) || 'informe'
+}
+
 function normalizeExport(item: Partial<RecentExport>, index: number): RecentExport | null {
   if (!item.name || !item.type || !item.date) return null
+
+  const hasContent = Boolean(item.content?.trim())
+  const hasData = Boolean(item.data)
+  const filename = item.filename?.endsWith('.txt')
+    ? item.filename
+    : item.filename?.replace(/\.csv$/i, '.txt') ?? `${sanitizeFilename(item.name)}.txt`
+
   return {
     id: item.id ?? `${item.date}-${index}`,
     name: item.name,
     type: item.type,
     date: item.date,
-    filename: item.filename ?? `${sanitizeFilename(item.name)}.csv`,
+    filename,
     content: item.content ?? '',
+    data: item.data,
+    fromDate: item.fromDate,
+    toDate: item.toDate,
+    legacy: item.legacy ?? (!hasContent && !hasData),
     archived: item.archived ?? false,
   }
 }
@@ -92,67 +110,9 @@ function saveRecentExports(exports: RecentExport[]): void {
 }
 
 function saveRecentExport(entry: RecentExport): RecentExport[] {
-  const next = [
-    entry,
-    ...loadRecentExports().filter((item) => item.id !== entry.id),
-  ].slice(0, MAX_RECENT_EXPORTS)
+  const next = [entry, ...loadRecentExports().filter((item) => item.id !== entry.id)].slice(0, MAX_RECENT_EXPORTS)
   saveRecentExports(next)
   return next
-}
-
-function escapeCsvCell(value: string | number): string {
-  const text = String(value)
-  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
-  return text
-}
-
-function buildCsvContent(headers: string[], rows: (string | number)[][]): string {
-  const lines = [headers.map(escapeCsvCell).join(','), ...rows.map((row) => row.map(escapeCsvCell).join(','))]
-  return `\uFEFF${lines.join('\n')}`
-}
-
-function downloadCsvContent(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-function openCsvInBrowser(content: string): boolean {
-  if (!content) return false
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const opened = window.open(url, '_blank', 'noopener,noreferrer')
-  if (opened) {
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
-    return true
-  }
-  URL.revokeObjectURL(url)
-  return false
-}
-
-function sanitizeFilename(name: string): string {
-  return name.trim().replace(/[^\p{L}\p{N}\-_]+/gu, '-').replace(/-+/g, '-').slice(0, 60) || 'informe'
-}
-
-const reportTypeLabels: Record<ReportType, string> = {
-  ventas: 'Ventas',
-  inventario: 'Inventario',
-}
-
-function formatExportDate(isoDate: string): string {
-  try {
-    return new Date(isoDate).toLocaleString('es-CO', {
-      dateStyle: 'short',
-      timeStyle: 'short',
-      timeZone: 'America/Bogota',
-    })
-  } catch {
-    return isoDate
-  }
 }
 
 function exportKey(item: RecentExport): string {
@@ -165,10 +125,11 @@ interface ReportListProps {
   onOpen: (item: RecentExport) => void
   onDownload: (item: RecentExport) => void
   onArchive: (item: RecentExport) => void
+  onDelete: (item: RecentExport) => void
   onUnarchive?: (item: RecentExport) => void
 }
 
-function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnarchive }: ReportListProps) {
+function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onDelete, onUnarchive }: ReportListProps) {
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-lg px-xl py-3xl text-center">
@@ -186,7 +147,7 @@ function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnar
             type="button"
             onClick={() => onOpen(item)}
             className="flex min-w-0 flex-1 items-center gap-md rounded-lg text-left transition-colors hover:bg-surface-container-high/60 -mx-2 px-2 py-1"
-            title="Abrir en el navegador"
+            title="Ver informe"
           >
             <div className="rounded-lg bg-primary/10 p-sm text-primary">
               <Icon name={item.type === 'ventas' ? 'receipt_long' : 'inventory_2'} />
@@ -194,7 +155,8 @@ function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnar
             <div className="min-w-0 flex-1">
               <p className="truncate font-body-md font-semibold text-on-surface">{item.name}</p>
               <p className="text-body-sm text-on-surface-variant">
-                {reportTypeLabels[item.type]} · {formatExportDate(item.date)}
+                {REPORT_TYPE_LABELS[item.type]} · {formatGeneratedAt(item.date)}
+                {item.legacy ? ' · Sin contenido' : ''}
               </p>
             </div>
           </button>
@@ -203,15 +165,16 @@ function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnar
               type="button"
               onClick={() => onOpen(item)}
               className="rounded-lg p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary hover:bg-primary/10"
-              title="Abrir en el navegador"
+              title="Ver informe"
             >
-              <Icon name="open_in_new" size={20} />
+              <Icon name="visibility" size={20} />
             </button>
             <button
               type="button"
               onClick={() => onDownload(item)}
-              className="rounded-lg p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary hover:bg-primary/10"
-              title="Descargar CSV"
+              disabled={item.legacy || !item.content}
+              className="rounded-lg p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary hover:bg-primary/10 disabled:opacity-40"
+              title={item.legacy ? 'Regenera el informe para descargar' : 'Descargar TXT'}
             >
               <Icon name="download" size={20} />
             </button>
@@ -234,6 +197,14 @@ function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnar
                 <Icon name="archive" size={20} />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => onDelete(item)}
+              className="rounded-lg p-2 text-on-surface-variant transition-all hover:text-error hover:bg-error/10"
+              title="Eliminar informe"
+            >
+              <Icon name="delete" size={20} />
+            </button>
           </div>
         </li>
       ))}
@@ -244,19 +215,18 @@ function ReportList({ items, emptyMessage, onOpen, onDownload, onArchive, onUnar
 export function ReportsPage() {
   const { toastMessage, showToast, dismissToast } = useToast()
   const [modalOpen, setModalOpen] = useState(false)
+  const [previewReport, setPreviewReport] = useState<RecentExport | null>(null)
   const [reportName, setReportName] = useState('')
   const [reportType, setReportType] = useState<ReportType>('ventas')
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 30)
-    return d.toISOString().slice(0, 10)
-  })
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [datePreset, setDatePreset] = useState<ReportDatePreset>(DEFAULT_REPORT_DATE_PRESET)
+  const [fromDate, setFromDate] = useState(() => getReportDateRangeForPreset(DEFAULT_REPORT_DATE_PRESET).fromDate)
+  const [toDate, setToDate] = useState(() => getReportDateRangeForPreset(DEFAULT_REPORT_DATE_PRESET).toDate)
   const [generating, setGenerating] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [stats, setStats] = useState<ReportsStats>(() => loadReportsStats())
   const [recentExports, setRecentExports] = useState<RecentExport[]>(() => loadRecentExports())
   const [showArchived, setShowArchived] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<RecentExport | null>(null)
 
   const activeExports = useMemo(
     () => recentExports.filter((item) => !item.archived),
@@ -267,29 +237,28 @@ export function ReportsPage() {
     [recentExports],
   )
 
+  const applyDatePreset = (preset: ReportDatePreset) => {
+    setDatePreset(preset)
+    if (preset !== 'custom') {
+      const range = getReportDateRangeForPreset(preset)
+      setFromDate(range.fromDate)
+      setToDate(range.toDate)
+    }
+  }
+
   const openModal = () => {
     setReportName('')
     setReportType('ventas')
+    applyDatePreset(DEFAULT_REPORT_DATE_PRESET)
     setFormError(null)
     setModalOpen(true)
   }
 
   const handleOpenReport = (item: RecentExport) => {
-    if (!item.content) {
-      showToast('Este informe no tiene contenido guardado. Genera uno nuevo.')
-      return
-    }
-    if (!openCsvInBrowser(item.content)) {
-      showToast('No se pudo abrir una nueva pestaña. Permite ventanas emergentes e inténtalo de nuevo.')
-    }
+    setPreviewReport(item)
   }
 
-  const handleDownloadReport = (item: RecentExport) => {
-    if (!item.content) {
-      showToast('Este informe no tiene contenido guardado. Genera uno nuevo.')
-      return
-    }
-    downloadCsvContent(item.filename, item.content)
+  const recordDownload = () => {
     const nextStats: ReportsStats = {
       generatedCount: stats.generatedCount,
       downloadsThisMonth: stats.downloadsThisMonth + 1,
@@ -297,6 +266,20 @@ export function ReportsPage() {
     }
     setStats(nextStats)
     saveReportsStats(nextStats)
+  }
+
+  const handleDownloadReport = (item: RecentExport) => {
+    if (item.legacy || !item.content) {
+      setPreviewReport(item)
+      return
+    }
+    downloadTxtContent(item.filename, item.content)
+    recordDownload()
+    showToast(`Descarga iniciada: ${item.filename}`)
+  }
+
+  const handlePreviewDownload = (item: RecentExport) => {
+    recordDownload()
     showToast(`Descarga iniciada: ${item.filename}`)
   }
 
@@ -318,6 +301,33 @@ export function ReportsPage() {
     showToast(`Informe restaurado: ${item.name}`)
   }
 
+  const handleDeleteReport = (item: RecentExport) => {
+    setDeleteTarget(item)
+  }
+
+  const handleConfirmDelete = () => {
+    if (!deleteTarget) return
+
+    const next = recentExports.filter((entry) => entry.id !== deleteTarget.id)
+    setRecentExports(next)
+    saveRecentExports(next)
+
+    if (previewReport?.id === deleteTarget.id) {
+      setPreviewReport(null)
+    }
+
+    const nextStats: ReportsStats = {
+      generatedCount: Math.max(0, stats.generatedCount - 1),
+      downloadsThisMonth: stats.downloadsThisMonth,
+      monthKey: currentMonthKey(),
+    }
+    setStats(nextStats)
+    saveReportsStats(nextStats)
+
+    showToast(`Informe eliminado: ${deleteTarget.name}`)
+    setDeleteTarget(null)
+  }
+
   const handleGenerate = async () => {
     const name = reportName.trim()
     if (!name) {
@@ -334,40 +344,29 @@ export function ReportsPage() {
     try {
       const baseName = sanitizeFilename(name)
       const dateSuffix = `${fromDate}_${toDate}`
+      const generatedAt = new Date().toISOString()
+      const meta = {
+        name,
+        type: reportType,
+        fromDate: reportType === 'ventas' ? fromDate : undefined,
+        toDate: reportType === 'ventas' ? toDate : undefined,
+        generatedAt,
+      }
+
+      let data: ReportData
       let filename: string
-      let content: string
 
       if (reportType === 'ventas') {
         const result = await fetchSales({ from: fromDate, to: toDate, pageSize: 500 })
-        filename = `${baseName}-ventas-${dateSuffix}.csv`
-        content = buildCsvContent(
-          ['ID', 'Cliente', 'Correo', 'Origen', 'Fecha', 'Total', 'Estado'],
-          result.items.map((sale) => [
-            sale.id,
-            sale.customer,
-            sale.email,
-            sale.origin,
-            sale.date,
-            sale.total,
-            sale.status,
-          ]),
-        )
+        data = buildVentasReportData(result.items, meta)
+        filename = `${baseName}-ventas-${dateSuffix}.txt`
       } else {
         const result = await fetchInventory({ pageSize: 500 })
-        filename = `${baseName}-inventario-${dateSuffix}.csv`
-        content = buildCsvContent(
-          ['SKU', 'Producto', 'Categoría', 'Almacén', 'Cantidad', 'Precio unitario', 'Nivel stock'],
-          result.items.map((item) => [
-            item.sku,
-            item.name,
-            item.category,
-            item.warehouse,
-            item.quantity,
-            item.unitPrice,
-            item.stockLevel,
-          ]),
-        )
+        data = buildInventarioReportData(result.items, meta)
+        filename = `${baseName}-inventario-${dateSuffix}.txt`
       }
+
+      const content = buildTxtFromReportData(data)
 
       const nextStats: ReportsStats = {
         generatedCount: stats.generatedCount + 1,
@@ -381,20 +380,24 @@ export function ReportsPage() {
         id: crypto.randomUUID(),
         name,
         type: reportType,
-        date: new Date().toISOString(),
+        date: generatedAt,
         filename,
         content,
+        data,
+        fromDate: meta.fromDate,
+        toDate: meta.toDate,
+        legacy: false,
         archived: false,
       }
       setRecentExports(saveRecentExport(exportEntry))
 
-      showToast(`Informe generado: ${name}. Haz clic para abrirlo en el navegador.`)
+      showToast(`Informe generado: ${name}. Haz clic para ver la vista previa.`)
       setModalOpen(false)
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : 'No se pudo generar el informe. Verifica tu conexión e inténtalo de nuevo.'
+      const message = getUserFacingApiError(
+        err,
+        'No se pudo generar el informe. Verifica tu conexión e inténtalo de nuevo.',
+      )
       setFormError(message)
     } finally {
       setGenerating(false)
@@ -409,7 +412,8 @@ export function ReportsPage() {
         <div>
           <h1 className="font-display-lg text-display-lg text-on-surface">Informes</h1>
           <p className="mt-xs font-body-md text-body-md text-on-surface-variant">
-            Genera y exporta reportes del sistema en formato CSV.
+            Genera y exporta reportes del sistema en formato TXT con vista previa formateada. Los informes de ventas
+            incluyen el estado de despacho (Preparando, Enviado, Entregado).
           </p>
         </div>
         <PrimaryActionButton size="compact" onClick={openModal}>
@@ -458,6 +462,7 @@ export function ReportsPage() {
           onOpen={handleOpenReport}
           onDownload={handleDownloadReport}
           onArchive={handleArchiveReport}
+          onDelete={handleDeleteReport}
         />
       </section>
 
@@ -472,10 +477,45 @@ export function ReportsPage() {
             onOpen={handleOpenReport}
             onDownload={handleDownloadReport}
             onArchive={handleArchiveReport}
+            onDelete={handleDeleteReport}
             onUnarchive={handleUnarchiveReport}
           />
         </section>
       ) : null}
+
+      <ReportPreviewModal
+        open={previewReport !== null}
+        report={previewReport}
+        onClose={() => setPreviewReport(null)}
+        onDownload={handlePreviewDownload}
+      />
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="¿Eliminar este informe?"
+        icon="delete"
+        footer={
+          <div className="flex gap-md">
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="flex-1 rounded-lg border border-outline-variant py-2 font-label-md text-label-md"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              className="flex-1 rounded-lg bg-error py-2 font-label-md text-label-md text-on-error"
+            >
+              Eliminar
+            </button>
+          </div>
+        }
+      >
+        <p className="text-body-sm text-on-surface-variant">Esta acción no se puede deshacer.</p>
+      </Modal>
 
       <Modal
         open={modalOpen}
@@ -533,26 +573,43 @@ export function ReportsPage() {
             </Select>
           </label>
 
-          <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-label-md text-on-surface-variant">Desde</span>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-label-md text-on-surface-variant">Hasta</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary"
-              />
-            </label>
-          </div>
+          <label className="block">
+            <span className="mb-1 block text-label-md text-on-surface-variant">Rango de fechas</span>
+            <Select
+              value={datePreset}
+              onChange={(e) => applyDatePreset(e.target.value as ReportDatePreset)}
+              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface outline-none"
+            >
+              {(Object.keys(REPORT_DATE_PRESET_LABELS) as ReportDatePreset[]).map((preset) => (
+                <option key={preset} value={preset}>
+                  {REPORT_DATE_PRESET_LABELS[preset]}
+                </option>
+              ))}
+            </Select>
+          </label>
+
+          {datePreset === 'custom' ? (
+            <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-label-md text-on-surface-variant">Desde</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-label-md text-on-surface-variant">Hasta</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary"
+                />
+              </label>
+            </div>
+          ) : null}
         </div>
       </Modal>
     </div>

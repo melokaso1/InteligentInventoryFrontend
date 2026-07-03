@@ -23,6 +23,10 @@ function persistAuth(token: string, user: AuthUser) {
   localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
+export function updateStoredUser(token: string, user: AuthUser) {
+  persistAuth(token, user)
+}
+
 function clearAuth() {
   localStorage.removeItem(AUTH_KEY)
   localStorage.removeItem(TOKEN_KEY)

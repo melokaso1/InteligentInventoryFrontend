@@ -1,19 +1,35 @@
 import type { ChatOperationSummary } from '../../api'
+import type { FulfillmentStatus } from '../../types'
 import { formatCOP } from '../../utils/format'
 import { Icon } from '../ui/Icon'
+import { StatusBadge } from '../ui/StatusBadge'
 
 interface OperationSummaryProps {
   className?: string
   summary?: ChatOperationSummary | null
   chatState?: string
   invoiceNumber?: string
+  fulfillmentStatus?: FulfillmentStatus | null
   onConfirm?: () => void
   onModify?: () => void
   onCancel?: () => void
 }
 
-function statusDisplay(status: string, state: string) {
+const fulfillmentLabels: Record<FulfillmentStatus, string> = {
+  preparing: 'Preparando pedido',
+  shipped: 'Enviado',
+  delivered: 'Entregado',
+}
+
+function statusDisplay(status: string, state: string, fulfillment?: FulfillmentStatus | null) {
   if (state === 'sale_completed' || status === 'completed') {
+    if (fulfillment) {
+      return {
+        label: fulfillmentLabels[fulfillment],
+        tone: fulfillment === 'delivered' ? 'text-primary' : 'text-on-surface',
+        pulse: fulfillment === 'preparing',
+      }
+    }
     return { label: 'Compra completada', tone: 'text-primary', pulse: false }
   }
   if (state === 'awaiting_confirmation' || status === 'pending_confirmation') {
@@ -30,11 +46,14 @@ export function OperationSummary({
   summary,
   chatState = 'idle',
   invoiceNumber,
+  fulfillmentStatus,
   onConfirm,
   onModify,
   onCancel,
 }: OperationSummaryProps) {
-  const status = summary ? statusDisplay(summary.status, chatState) : statusDisplay('', chatState)
+  const status = summary
+    ? statusDisplay(summary.status, chatState, fulfillmentStatus)
+    : statusDisplay('', chatState, fulfillmentStatus)
   const lineItems =
     summary?.lineItems && summary.lineItems.length > 0
       ? summary.lineItems
@@ -68,6 +87,11 @@ export function OperationSummary({
             </p>
             {invoiceNumber && (
               <p className="mt-xs font-mono-sm text-xs text-primary">Factura: {invoiceNumber}</p>
+            )}
+            {(chatState === 'sale_completed' || summary?.status === 'completed') && fulfillmentStatus && (
+              <div className="mt-sm">
+                <StatusBadge variant={fulfillmentStatus} />
+              </div>
             )}
           </div>
           <span className="rounded border border-outline-variant bg-surface-container-highest px-sm py-1 font-mono-sm text-[11px] text-on-surface-variant">

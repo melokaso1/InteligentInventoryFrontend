@@ -40,3 +40,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
     body: JSON.stringify({ currentPassword, newPassword }),
   })
 }
+
+export async function updateProfile(name: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/api/auth/profile', {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+}

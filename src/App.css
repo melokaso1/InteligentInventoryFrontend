@@ -230,9 +230,29 @@ body {
 }
 
 .invoice-preview-canvas {
-  aspect-ratio: 1 / 1.414;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: light-dark(#ffffff, var(--color-surface-container-lowest));
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
+}
+
+.invoice-preview-canvas table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.invoice-preview-canvas th,
+.invoice-preview-canvas td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.invoice-preview-line-items {
+  max-height: min(45vh, 28rem);
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .dark .invoice-preview-canvas {

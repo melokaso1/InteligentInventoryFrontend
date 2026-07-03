@@ -31,12 +31,51 @@ export function saleUnitLabel(saleUnit?: string): string {
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
+/** Fecha calendario en Colombia (COT) como yyyy-MM-dd. */
+export function getColombiaDateString(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(date)
+}
+
 /** Fecha local en formato yyyy-MM-dd (sin desfase UTC). */
 export function getLocalDateString(date = new Date()): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+/** Fecha inicial por defecto para informes: hace 30 días calendario locales. */
+export function getDefaultReportFromDate(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 30)
+  return getLocalDateString(d)
+}
+
+/** Fecha final por defecto para informes: hoy calendario local (inclusive). */
+export function getDefaultReportToDate(): string {
+  return getLocalDateString(new Date())
+}
+
+/** Formatea una fecha para encabezados de agrupación: "2 de jul de 2026". */
+export function formatGroupDate(iso: string): string {
+  if (ISO_DATE_ONLY.test(iso)) {
+    const [year, month, day] = iso.split('-').map(Number)
+    const date = new Date(year, month - 1, day)
+    return new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+  }
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+}
+
+/** Clave yyyy-MM-dd en zona Colombia para agrupar por día. */
+export function getColombiaDateKey(iso: string): string {
+  if (ISO_DATE_ONLY.test(iso)) return iso
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(date)
 }
 
 /** Formatea una fecha ISO a estilo medio en español (Colombia). */

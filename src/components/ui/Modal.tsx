@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useOverlayLock } from '../../hooks/useOverlayLock'
 import { Icon } from './Icon'
 
 interface ModalProps {
@@ -8,9 +9,12 @@ interface ModalProps {
   icon?: string
   children: ReactNode
   footer?: ReactNode
+  wide?: boolean
 }
 
-export function Modal({ open, onClose, title, icon, children, footer }: ModalProps) {
+export function Modal({ open, onClose, title, icon, children, footer, wide = false }: ModalProps) {
+  useOverlayLock(open)
+
   return (
     <div
       className={`fixed inset-0 z-[100] flex items-center justify-center transition-opacity duration-300 ${
@@ -26,7 +30,7 @@ export function Modal({ open, onClose, title, icon, children, footer }: ModalPro
         tabIndex={open ? 0 : -1}
       />
       <div
-        className={`relative z-10 bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl transform transition-transform duration-300 flex flex-col overflow-hidden border border-outline-variant mx-4 ${
+        className={`relative z-10 bg-surface-container-lowest w-full ${wide ? 'max-w-4xl' : 'max-w-md'} max-h-[90vh] rounded-xl shadow-2xl transform transition-transform duration-300 flex flex-col overflow-hidden border border-outline-variant mx-4 ${
           open ? 'scale-100' : 'scale-95'
         }`}
       >
@@ -43,7 +47,7 @@ export function Modal({ open, onClose, title, icon, children, footer }: ModalPro
             <Icon name="close" />
           </button>
         </div>
-        <div className="p-lg space-y-md">{children}</div>
+        <div className="overflow-y-auto p-lg space-y-md">{children}</div>
         {footer && (
           <div
             className="relative z-10 p-lg bg-surface-container-low border-t border-outline-variant"

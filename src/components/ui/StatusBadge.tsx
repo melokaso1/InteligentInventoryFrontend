@@ -12,6 +12,9 @@ type BadgeVariant =
   | 'overdue'
   | 'draft'
   | 'archived'
+  | 'preparing'
+  | 'shipped'
+  | 'delivered'
 
 const badgeStyles: Record<BadgeVariant, string> = {
   active:
@@ -39,6 +42,12 @@ const badgeStyles: Record<BadgeVariant, string> = {
     'bg-secondary-container text-on-secondary-container dark:bg-secondary-container dark:text-on-secondary-container',
   archived:
     'bg-secondary-container text-on-secondary-container dark:bg-secondary-container dark:text-on-secondary-container',
+  preparing:
+    'bg-warning-container/80 text-on-warning-container border border-warning-container dark:bg-warning-container dark:text-on-warning-container dark:border-warning-container',
+  shipped:
+    'bg-tertiary-container/80 text-on-tertiary-container border border-tertiary-container dark:bg-tertiary-container dark:text-on-tertiary-container dark:border-tertiary-container',
+  delivered:
+    'bg-primary-container/30 text-on-primary-container border border-primary-container/50 dark:bg-primary-container dark:text-on-primary-container dark:border-primary-container',
 }
 
 const variantLabels: Record<BadgeVariant, string> = {
@@ -55,6 +64,9 @@ const variantLabels: Record<BadgeVariant, string> = {
   overdue: 'VENCIDO',
   draft: 'BORRADOR',
   archived: 'ARCHIVADO',
+  preparing: 'PREPARANDO',
+  shipped: 'ENVIADO',
+  delivered: 'ENTREGADO',
 }
 
 interface StatusBadgeProps {
