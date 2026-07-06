@@ -5,7 +5,7 @@ import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { PasswordChecklist } from '../components/ui/PasswordChecklist'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
-import { isLoggedIn, useAuth } from '../hooks/useAuth'
+import { getHomePath, isLoggedIn, useAuth } from '../hooks/useAuth'
 import { validatePassword } from '../utils/password'
 
 function InputField({
@@ -68,7 +68,7 @@ export function RegisterPage() {
   const [loading, setLoading] = useState(false)
 
   if (isLoggedIn()) {
-    return <Navigate to="/" replace />
+    return <Navigate to={getHomePath()} replace />
   }
 
   const handleSubmit = async (e: FormEvent) => {

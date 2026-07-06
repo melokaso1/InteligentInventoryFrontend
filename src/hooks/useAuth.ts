@@ -110,7 +110,7 @@ export function useAuth() {
     clearChatSession()
     clearAuth()
     setIsAuthenticated(false)
-    navigate('/login')
+    navigate('/chatbot')
   }, [navigate])
 
   return { isAuthenticated, login, register, logout }
@@ -118,6 +118,14 @@ export function useAuth() {
 
 export function isLoggedIn(): boolean {
   return localStorage.getItem(AUTH_KEY) === 'true' && !!localStorage.getItem(TOKEN_KEY)
+}
+
+/** Default landing path: guests and clients → chatbot; admins → dashboard. */
+export function getHomePath(): string {
+  if (!isLoggedIn() || getRole() !== 'admin') {
+    return '/chatbot'
+  }
+  return '/'
 }
 
 export function getRole(): ErpRole {

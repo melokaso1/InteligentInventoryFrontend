@@ -3,7 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import type { Sale } from '../types'
 import { getUserFacingApiError } from '../api/client'
 import { createSaleInvoice, fetchSales, fetchSaleMetrics } from '../api'
-import { formatCOP } from '../utils/format'
+import {
+  buildVisiblePageNumbers,
+  PaginationControls,
+  PaginationFooter,
+  PaginationIconButton,
+  PaginationInfo,
+  PaginationPageButton,
+  PaginationPages,
+} from '../components/ui/Pagination'
+import { formatCOP, formatDateTime } from '../utils/format'
 import { CreateManualSaleDrawer } from '../components/sales/CreateManualSaleDrawer'
 import { DataTable } from '../components/ui/DataTable'
 import { Drawer } from '../components/ui/Drawer'
@@ -23,6 +32,8 @@ import {
   getSalesDateRangeForPreset,
   type SalesDatePreset,
 } from '../utils/salesDatePresets'
+
+const PAGE_SIZE = 8
 
 const originLabels: Record<'all' | 'manual' | 'chatbot', string> = {
   all: 'Todos',
@@ -47,6 +58,8 @@ export function SalesPage() {
   const navigate = useNavigate()
   const { toastMessage, showToast, dismissToast } = useToast()
   const [sales, setSales] = useState<Sale[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [page, setPage] = useState(1)
   const [metrics, setMetrics] = useState({
     totalSales: 0,
     totalRevenue: 0,
@@ -78,7 +91,8 @@ export function SalesPage() {
         from: fromDate,
         to: toDate,
         origin,
-        pageSize: 50,
+        page,
+        pageSize: PAGE_SIZE,
       }),
       fetchSaleMetrics({
         from: fromDate,
@@ -87,8 +101,13 @@ export function SalesPage() {
       }),
     ])
     setSales(salesResult.items)
+    setTotalCount(salesResult.totalCount)
     setMetrics(metricsResult)
-  }, [dateRange, originFilter])
+  }, [dateRange, originFilter, page])
+
+  useEffect(() => {
+    setPage(1)
+  }, [datePreset, originFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -171,6 +190,10 @@ export function SalesPage() {
   const orderCount = metrics.totalSales
   const totalRevenue = metrics.totalRevenue
   const avgTicket = orderCount > 0 ? totalRevenue / orderCount : 0
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const visiblePages = buildVisiblePageNumbers(page, totalPages)
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
+  const rangeEnd = Math.min(page * PAGE_SIZE, totalCount)
   const selectedGenerating = selected ? generatingId === selected.id : false
   const selectedAlreadyInvoiced = selected?.status === 'invoiced'
 
@@ -317,6 +340,7 @@ export function SalesPage() {
                   <p className="line-clamp-1 overflow-hidden font-body-md font-semibold text-on-surface">
                     {row.customer}
                   </p>
+                  <p className="truncate text-body-sm text-on-surface-variant">{formatDateTime(row.date)}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end justify-center gap-1">
                   <span className="whitespace-nowrap font-semibold">{formatCOP(row.total)}</span>
@@ -362,7 +386,14 @@ export function SalesPage() {
                   </span>
                 ),
               },
-              { key: 'date', header: 'Fecha del pedido', hideOnTablet: true, render: (row) => row.date },
+              {
+                key: 'date',
+                header: 'Fecha y hora',
+                nowrap: true,
+                render: (row) => (
+                  <span className="text-on-surface-variant">{formatDateTime(row.date)}</span>
+                ),
+              },
               {
                 key: 'total',
                 header: 'Importe total',
@@ -434,6 +465,68 @@ export function SalesPage() {
               },
             ]}
           />
+          <PaginationFooter className="p-md">
+            <PaginationInfo>
+              {totalCount === 0 ? (
+                'Sin resultados'
+              ) : (
+                <>
+                  Mostrando{' '}
+                  <span className="font-bold">
+                    {rangeStart.toLocaleString('es-CO')} a {rangeEnd.toLocaleString('es-CO')}
+                  </span>{' '}
+                  de {totalCount.toLocaleString('es-CO')} registros
+                </>
+              )}
+            </PaginationInfo>
+            <PaginationControls>
+              <PaginationIconButton
+                icon="chevron_left"
+                disabled={page <= 1}
+                className="disabled:opacity-30"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              />
+              <PaginationPages>
+                {visiblePages.length > 0 && visiblePages[0] > 1 ? (
+                  <>
+                    <PaginationPageButton onClick={() => setPage(1)}>1</PaginationPageButton>
+                    {visiblePages[0] > 2 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+                {visiblePages.map((pageNumber) => (
+                  <PaginationPageButton
+                    key={pageNumber}
+                    active={pageNumber === page}
+                    onClick={() => setPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </PaginationPageButton>
+                ))}
+                {visiblePages.length > 0 && visiblePages[visiblePages.length - 1] < totalPages ? (
+                  <>
+                    {visiblePages[visiblePages.length - 1] < totalPages - 1 ? (
+                      <span className="shrink-0 px-1 text-on-surface-variant" aria-hidden="true">
+                        …
+                      </span>
+                    ) : null}
+                    <PaginationPageButton onClick={() => setPage(totalPages)}>
+                      {totalPages}
+                    </PaginationPageButton>
+                  </>
+                ) : null}
+              </PaginationPages>
+              <PaginationIconButton
+                icon="chevron_right"
+                disabled={page >= totalPages || totalPages === 0}
+                className="disabled:opacity-30"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              />
+            </PaginationControls>
+          </PaginationFooter>
         </div>
       </div>
 

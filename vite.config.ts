@@ -3,12 +3,20 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import type { ProxyOptions } from 'vite'
 
+const NGROK_SKIP_HEADER = 'ngrok-skip-browser-warning'
+
 function createApiProxy(): ProxyOptions {
   return {
     target: 'http://127.0.0.1:5151',
     changeOrigin: true,
     secure: false,
     configure: (proxy) => {
+      proxy.on('proxyReq', (proxyReq, req) => {
+        const skipHeader = req.headers[NGROK_SKIP_HEADER]
+        if (skipHeader) {
+          proxyReq.setHeader(NGROK_SKIP_HEADER, skipHeader)
+        }
+      })
       proxy.on('error', (err) => {
         if ('code' in err && err.code === 'ECONNREFUSED') {
           console.error(

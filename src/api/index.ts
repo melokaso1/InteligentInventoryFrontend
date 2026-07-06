@@ -210,6 +210,114 @@ export interface ChatOperationSummary {
   lineItems?: ChatCartLineItem[]
 }
 
+function computeLineSubtotal(item: ChatCartLineItem): number {
+  if (item.subtotal > 0) return item.subtotal
+  if (item.quantity > 0 && item.unitPrice > 0) {
+    return Math.round(item.unitPrice * item.quantity * 100) / 100
+  }
+  return item.subtotal
+}
+
+function normalizeCartLineItem(item: ChatCartLineItem): ChatCartLineItem {
+  return {
+    ...item,
+    subtotal: computeLineSubtotal(item),
+  }
+}
+
+function parseCartLineItems(raw: unknown): ChatCartLineItem[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+
+  const items = raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      const productCode = String(record.productCode ?? record.ProductCode ?? '').trim()
+      if (!productCode) return null
+
+      return normalizeCartLineItem({
+        productCode,
+        productName: String(record.productName ?? record.ProductName ?? productCode),
+        quantity: Number(record.quantity ?? record.Quantity ?? 0),
+        measureUnit: (record.measureUnit ?? record.MeasureUnit) as string | undefined,
+        unitPrice: Number(record.unitPrice ?? record.UnitPrice ?? 0),
+        subtotal: Number(record.subtotal ?? record.Subtotal ?? 0),
+      })
+    })
+    .filter((item): item is ChatCartLineItem => item !== null)
+
+  return items.length > 0 ? items : null
+}
+
+function expectedCartCountFromTransactionId(transactionId?: string): number | null {
+  if (!transactionId) return null
+  const match = transactionId.match(/-(\d+)$/)
+  if (!match) return null
+  const count = Number(match[1])
+  return Number.isFinite(count) && count > 0 ? count : null
+}
+
+/** Ensure lineItems is populated for invoice-style rendering (incl. session restore). */
+export function normalizeChatOperationSummary(
+  summary?: ChatOperationSummary | null,
+  cartFromMetadata?: ChatCartLineItem[] | null,
+): ChatOperationSummary | null {
+  if (!summary) return null
+
+  const rawLineItems =
+    summary.lineItems ??
+    (summary as { LineItems?: ChatCartLineItem[] }).LineItems ??
+    cartFromMetadata
+
+  const parsedLineItems = parseCartLineItems(rawLineItems)
+  if (parsedLineItems && parsedLineItems.length > 0) {
+    return {
+      ...summary,
+      lineItems: parsedLineItems,
+    }
+  }
+
+  const expectedCount = expectedCartCountFromTransactionId(summary.transactionId)
+  if (expectedCount !== null && expectedCount > 1) {
+    return { ...summary, lineItems: [] }
+  }
+
+  if (!summary.productName) {
+    return summary
+  }
+
+  const singleLineSubtotal = computeLineSubtotal({
+    productCode: summary.productCode,
+    productName: summary.productName,
+    quantity: summary.quantity,
+    measureUnit: summary.measureUnit,
+    unitPrice: summary.unitPrice,
+    subtotal: summary.subtotal,
+  })
+
+  if (
+    summary.subtotal > 0 &&
+    singleLineSubtotal > 0 &&
+    Math.abs(summary.subtotal - singleLineSubtotal) > 0.01
+  ) {
+    return { ...summary, lineItems: [] }
+  }
+
+  return {
+    ...summary,
+    lineItems: [
+      normalizeCartLineItem({
+        productCode: summary.productCode,
+        productName: summary.productName,
+        quantity: summary.quantity,
+        measureUnit: summary.measureUnit,
+        unitPrice: summary.unitPrice,
+        subtotal: summary.subtotal,
+      }),
+    ],
+  }
+}
+
 export interface ChatProductOffer {
   productCode: string
   productName: string
@@ -240,6 +348,8 @@ interface ChatHistoryBotMetadata {
   invoiceNumber?: string
   chips?: string[]
   operationSummary?: ChatOperationSummary
+  cart?: ChatCartLineItem[]
+  Cart?: ChatCartLineItem[]
   offers?: ChatProductOffer[]
   offersTotalCount?: number
 }
@@ -779,23 +889,48 @@ export function getLatestChatStateFromHistory(history: ChatHistoryMessage[]): {
   operationSummary: ChatOperationSummary | null
   invoiceNumber?: string
 } {
+  let chatState = 'idle'
+  let invoiceNumber: string | undefined
+  let operationSummary: ChatOperationSummary | null = null
+  let bestLineCount = 0
+  let capturedLatestBot = false
+
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const item = history[i]
     if (item.senderType !== 'bot' || !item.metadataJson) continue
 
     try {
       const metadata = JSON.parse(item.metadataJson) as ChatHistoryBotMetadata
-      return {
-        chatState: metadata.state ?? 'idle',
-        operationSummary: metadata.operationSummary ?? null,
-        invoiceNumber: metadata.invoiceNumber,
+
+      if (!capturedLatestBot) {
+        chatState = metadata.state ?? 'idle'
+        invoiceNumber = metadata.invoiceNumber
+        capturedLatestBot = true
+      }
+
+      const cartFromMetadata = parseCartLineItems(metadata.cart ?? metadata.Cart)
+      const normalized = normalizeChatOperationSummary(metadata.operationSummary ?? null, cartFromMetadata)
+      const lineCount = normalized?.lineItems?.length ?? 0
+      const expectedCount = expectedCartCountFromTransactionId(normalized?.transactionId)
+      const score = lineCount > 0 ? lineCount : (expectedCount ?? 0)
+
+      if (
+        normalized &&
+        (operationSummary === null || score > bestLineCount || (score > 0 && bestLineCount === 0))
+      ) {
+        operationSummary = normalized
+        bestLineCount = score
+      }
+
+      if (operationSummary && bestLineCount > 1) {
+        break
       }
     } catch {
       continue
     }
   }
 
-  return { chatState: 'idle', operationSummary: null }
+  return { chatState, operationSummary, invoiceNumber }
 }
 
 interface ApiNotification {

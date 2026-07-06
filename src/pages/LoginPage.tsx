@@ -5,7 +5,7 @@ import { Icon } from '../components/ui/Icon'
 import { Logo } from '../components/ui/Logo'
 import { Modal } from '../components/ui/Modal'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
-import { isLoggedIn, useAuth } from '../hooks/useAuth'
+import { getHomePath, isLoggedIn, useAuth } from '../hooks/useAuth'
 import { buildCheckoutRegisterUrl } from '../utils/checkoutAuth'
 
 const FOOTER_LINKS = ['Términos de Servicio', 'Política de Privacidad', 'Soporte TI'] as const
@@ -79,7 +79,7 @@ export function LoginPage() {
   const [forgotOpen, setForgotOpen] = useState(false)
 
   if (isLoggedIn()) {
-    return <Navigate to="/" replace />
+    return <Navigate to={getHomePath()} replace />
   }
 
   const handleSubmit = async (e: FormEvent) => {

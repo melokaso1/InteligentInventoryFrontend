@@ -11,6 +11,7 @@ import {
   getLatestChatStateFromHistory,
   mapChatHistoryToMessages,
   sendChatMessage,
+  normalizeChatOperationSummary,
   type ChatOperationSummary,
 } from '../api'
 import { ApiError, getUserFacingApiError } from '../api/client'
@@ -22,8 +23,12 @@ import {
   CHECKOUT_AUTH_MESSAGE,
   messageRequiresCheckoutAuth,
 } from '../utils/checkoutAuth'
+import {
+  hasCompletedChatOnboarding,
+  isWelcomeOnlyConversation,
+  markChatOnboardingComplete,
+} from '../utils/chatOnboarding'
 import { ChatMessage as ChatMessageComponent, TypingIndicator } from '../components/chat/ChatMessage'
-import { ChatHelpFab } from '../components/chat/ChatHelpFab'
 import { ChatInput } from '../components/chat/ChatInput'
 import { OperationSummary } from '../components/chat/OperationSummary'
 import { PurchaseTutorialPanel } from '../components/chat/PurchaseTutorialPanel'
@@ -31,25 +36,27 @@ import { Icon } from '../components/ui/Icon'
 type MobileView = 'chat' | 'summary'
 type HealthStatus = 'checking' | 'healthy' | 'unhealthy'
 
-const WELCOME_MESSAGE: ChatMessage = {
-  id: 'welcome',
-  role: 'assistant',
-  content:
-    '¡Hola! Soy **Drogui**, tu asistente de ventas en El Plonsazo.\n\n' +
-    'Escríbeme en **lenguaje natural** para consultar stock, buscar productos o iniciar una compra. ' +
-    'Para ver el catálogo completo, escribe **«ver catálogo»** (se muestra en páginas de 5 productos). ' +
-    'Para tus facturas, **pídeme ver factura**.\n\n' +
-    '**Ejemplos:**\n' +
-    '• «consultar stock de PLZ-MJ-001»\n' +
-    '• «buscar lsd» o simplemente «lsd»\n' +
-    '• «ver catálogo»\n' +
-    '• «quiero comprar cocaina»\n' +
-    '• «ver factura» o «mis facturas»\n' +
-    '• «agregar al carrito»\n' +
-    '• «cancelar»\n\n' +
-    'También puedes usar los botones del menú o la guía **¿Cómo comprar?** en **Soporte** del menú superior.',
-  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-  chips: ['¿Cómo me comunico?', 'Ver catálogo', 'Ver factura', 'Consultar stock', 'Buscar producto'],
+const CHAT_HEALTH_POLL_INTERVAL_MS = 6_000
+
+function buildWelcomeMessages(): ChatMessage[] {
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return [
+    {
+      id: 'welcome-1',
+      role: 'assistant',
+      content:
+        '¡Hola! Soy **Drogui**, tu asistente de ventas en El Plonsazo.\n\n' +
+        'Puedes escribirme como si hablaras con una persona: te ayudo a buscar productos, consultar stock y completar compras.\n\n' +
+        '**Así de fácil funciona:**\n\n' +
+        '• **Escribe en lenguaje natural** — por ejemplo: «buscar lsd», «consultar stock de PLZ-MJ-001» o «quiero comprar marihuana».\n' +
+        '• **Explora el catálogo** — escribe **«ver catálogo»** y verás los productos de 5 en 5.\n' +
+        '• **Confirma tu compra** — revisa el resumen (pestaña **Resumen** en móvil o columna derecha en escritorio) y confirma cuando estés listo.\n' +
+        '• **Consulta facturas** — escribe **«ver factura»** o entra a **Mis facturas** desde el menú.\n\n' +
+        'Elige una opción rápida abajo o escríbeme lo que necesites. Para ver la guía paso a paso, pulsa **¿Cómo comprar?**.',
+      time,
+      chips: ['¿Cómo comprar?', 'Ver catálogo', 'Buscar producto', 'Consultar stock', 'Ver factura'],
+    },
+  ]
 }
 
 const CHIP_INTENT_MESSAGES: Record<string, string> = {
@@ -92,6 +99,7 @@ export function ChatbotPage() {
   const sentInitialForKey = useRef<string | null>(null)
   const requestSeq = useRef(0)
   const latestRequestIdRef = useRef(0)
+  const autoOpenedTutorialRef = useRef(false)
   const lastCancelSentAtRef = useRef(0)
 
   const chatAvailable = healthStatus === 'healthy'
@@ -164,6 +172,10 @@ export function ChatbotPage() {
     void checkHealth()
   }, [checkHealth])
 
+  useRealtimeRefresh(checkHealth, [checkHealth], {
+    intervalMs: CHAT_HEALTH_POLL_INTERVAL_MS,
+  })
+
   useEffect(() => {
     let cancelled = false
 
@@ -183,14 +195,14 @@ export function ChatbotPage() {
             void loadLatestFulfillment(true)
           }
         } else {
-          setMessages([WELCOME_MESSAGE])
+          setMessages(buildWelcomeMessages())
           setChatState('idle')
           setOperationSummary(null)
           setInvoiceNumber(undefined)
         }
       } catch {
         if (!cancelled) {
-          setMessages([WELCOME_MESSAGE])
+          setMessages(buildWelcomeMessages())
           setChatState('idle')
           setOperationSummary(null)
           setInvoiceNumber(undefined)
@@ -208,6 +220,30 @@ export function ChatbotPage() {
     }
   }, [sessionId, loadLatestFulfillment])
 
+  useEffect(() => {
+    if (
+      !historyLoaded ||
+      autoOpenedTutorialRef.current ||
+      hasCompletedChatOnboarding() ||
+      !isWelcomeOnlyConversation(messages.map((message) => message.id))
+    ) {
+      return
+    }
+
+    autoOpenedTutorialRef.current = true
+    const timer = window.setTimeout(() => {
+      if (!hasCompletedChatOnboarding()) {
+        setTutorialOpen(true)
+      }
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [historyLoaded, messages])
+
+  const handleCloseTutorial = useCallback(() => {
+    setTutorialOpen(false)
+    markChatOnboardingComplete()
+  }, [])
+
   const startNewConversation = () => {
     const newSessionId = createNewChatSession()
     sentInitialForKey.current = null
@@ -217,16 +253,6 @@ export function ChatbotPage() {
     setInput('')
     setIsTyping(false)
   }
-
-  useEffect(() => {
-    if (healthStatus !== 'unhealthy') return
-
-    const interval = setInterval(() => {
-      void checkHealth()
-    }, 10_000)
-
-    return () => clearInterval(interval)
-  }, [healthStatus, checkHealth])
 
   useEffect(() => {
     const container = messagesContainerRef.current
@@ -299,7 +325,7 @@ export function ChatbotPage() {
       }
       setMessages((prev) => [...prev, botMsg])
       setChatState(result.state)
-      setOperationSummary(result.operationSummary ?? null)
+      setOperationSummary(normalizeChatOperationSummary(result.operationSummary ?? null))
       setInvoiceNumber(result.invoiceNumber)
       if (result.invoiceNumber || result.state === 'sale_completed') {
         notifyDataMutation('sales')
@@ -336,6 +362,10 @@ export function ChatbotPage() {
 
   const handleChipClick = (chip: string) => {
     if (!chatAvailable) return
+    if (chip === '¿Cómo comprar?') {
+      setTutorialOpen(true)
+      return
+    }
     if (chip === 'Ver factura') {
       if (!isLoggedIn()) {
         navigate('/login?returnTo=/my-invoices')
@@ -594,14 +624,9 @@ export function ChatbotPage() {
           onSend={() => void sendMessage(input)}
           disabled={!chatAvailable || !historyLoaded}
         />
-
-        <ChatHelpFab
-          onClick={() => setTutorialOpen(true)}
-          visible={mobileView === 'chat' && !tutorialOpen}
-        />
       </section>
 
-      <PurchaseTutorialPanel open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
+      <PurchaseTutorialPanel open={tutorialOpen} onClose={handleCloseTutorial} />
 
       <OperationSummary
         className={

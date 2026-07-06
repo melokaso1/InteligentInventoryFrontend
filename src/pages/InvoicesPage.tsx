@@ -4,6 +4,10 @@ import type { Invoice } from '../types'
 import { fetchInvoicePdf, fetchInvoices, fetchInvoiceStats, payInvoice } from '../api'
 import { getUserFacingApiError } from '../api/client'
 import { canPayInvoice, PayInvoiceModal, type PaymentMethod } from '../components/invoices/PayInvoiceModal'
+import {
+  canSendInvoice,
+  INVOICE_SEND_UNAVAILABLE_MESSAGE,
+} from '../components/invoices/invoiceSend'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
 import { formatCOP, formatDate } from '../utils/format'
@@ -62,6 +66,13 @@ function invoiceMailto(to: string, invoice: Invoice) {
 
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
+
+const invoicePreviewActionBase =
+  'inline-flex min-w-0 flex-1 items-center justify-center gap-sm rounded-lg px-md py-2 font-label-md text-label-md disabled:cursor-not-allowed disabled:opacity-60'
+
+const invoicePreviewActionPrimary = `${invoicePreviewActionBase} bg-primary text-on-primary hover:opacity-90`
+
+const invoicePreviewActionSecondary = `${invoicePreviewActionBase} border border-outline-variant text-on-surface hover:bg-surface-container-high`
 
 function InvoicePreviewPanel({
   selected,
@@ -147,9 +158,7 @@ function InvoicePreviewPanel({
     printWindow.close()
   }
 
-  const handleSend = () => {
-    onSend?.()
-  }
+  const sendAvailable = canSendInvoice(selected)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -241,7 +250,7 @@ function InvoicePreviewPanel({
               type="button"
               onClick={onPay}
               disabled={paying || downloadLoading}
-              className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className={invoicePreviewActionPrimary}
             >
               <Icon name="payments" size={16} className="shrink-0" />
               {paying ? 'Procesando…' : 'Marcar como pagada'}
@@ -251,7 +260,7 @@ function InvoicePreviewPanel({
             type="button"
             onClick={() => void handleDownload()}
             disabled={downloadLoading}
-            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
+            className={invoicePreviewActionSecondary}
           >
             <Icon name="download" size={16} className="shrink-0" />
             {downloadLoading ? 'Descargando…' : 'Descargar factura'}
@@ -260,21 +269,28 @@ function InvoicePreviewPanel({
             type="button"
             onClick={handlePrint}
             disabled={downloadLoading}
-            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg border border-outline-variant py-2 font-label-md text-label-md text-on-surface hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-60"
+            className={invoicePreviewActionSecondary}
           >
             <Icon name="print" size={16} className="shrink-0" />
             Imprimir
           </button>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={downloadLoading}
-            className="inline-flex flex-1 items-center justify-center gap-sm rounded-lg bg-primary py-2 font-label-md text-label-md text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Icon name="send" size={16} className="shrink-0" />
-            Enviar factura
-          </button>
+          {sendAvailable && onSend ? (
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={downloadLoading}
+              className={invoicePreviewActionPrimary}
+            >
+              <Icon name="send" size={16} className="shrink-0" />
+              Enviar factura
+            </button>
+          ) : null}
         </div>
+        {!sendAvailable ? (
+          <p className="mt-md text-body-sm text-on-surface-variant" role="note">
+            {INVOICE_SEND_UNAVAILABLE_MESSAGE}
+          </p>
+        ) : null}
         {actionError ? (
           <p className="mt-md text-body-sm text-error" role="alert">
             {actionError}
@@ -378,6 +394,8 @@ export function InvoicesPage() {
   const selected = invoices.find((inv) => inv.id === selectedId)
 
   const openEmailModal = (invoice: Invoice) => {
+    if (!canSendInvoice(invoice)) return
+
     setEmailInvoiceId(invoice.id)
     setEmailTo('')
     setEmailError(null)
@@ -394,6 +412,11 @@ export function InvoicesPage() {
 
     if (!invoice) {
       setEmailError('No se encontró la factura seleccionada.')
+      return
+    }
+
+    if (!canSendInvoice(invoice)) {
+      setEmailError(INVOICE_SEND_UNAVAILABLE_MESSAGE)
       return
     }
 
@@ -507,17 +530,19 @@ export function InvoicesPage() {
       >
         <Icon name="download" size={20} />
       </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          openEmailModal(row)
-        }}
-        className="rounded-lg border border-outline-variant p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary"
-        title="Enviar correo"
-      >
-        <Icon name="mail" size={20} />
-      </button>
+      {canSendInvoice(row) ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            openEmailModal(row)
+          }}
+          className="rounded-lg border border-outline-variant p-2 text-on-surface-variant transition-all hover:border-primary hover:text-primary"
+          title="Enviar correo"
+        >
+          <Icon name="mail" size={20} />
+        </button>
+      ) : null}
     </div>
   )
 
@@ -566,13 +591,13 @@ export function InvoicesPage() {
 
   return (
     <div className="relative flex min-w-0 max-w-full flex-1 flex-col overflow-x-hidden lg:flex-row lg:overflow-hidden">
-      <Toast message={toastMessage} onDismiss={dismissToast} className="absolute left-md right-md top-md z-[110]" />
       <section
-        className={`flex min-w-0 w-full flex-col lg:overflow-hidden border-b border-outline-variant bg-surface transition-[width] duration-300 ease-in-out lg:border-b-0 lg:border-r ${
+        className={`flex min-h-0 min-w-0 w-full flex-1 flex-col lg:overflow-hidden border-b border-outline-variant bg-surface transition-[width] duration-300 ease-in-out lg:border-b-0 lg:border-r ${
           previewOpen ? 'lg:w-3/5' : 'lg:w-full'
         }`}
       >
         <div className="flex shrink-0 flex-col gap-sm p-md md:gap-md md:p-gutter">
+          <Toast message={toastMessage} onDismiss={dismissToast} />
           <div className="flex items-start justify-between gap-sm">
             <div className="min-w-0 flex-1">
               <h3 className="text-headline-sm font-bold text-on-background md:font-display-lg md:text-display-lg">
@@ -621,8 +646,8 @@ export function InvoicesPage() {
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col border-t border-outline-variant bg-surface-container-lowest md:flex-1 md:overflow-hidden">
-          <div className="custom-scrollbar min-w-0 md:flex-1 md:overflow-y-auto">
+        <div className="flex min-h-0 min-w-0 flex-col border-t border-outline-variant bg-surface-container-lowest md:flex-1 md:overflow-hidden">
+          <div className="custom-scrollbar min-h-0 min-w-0 md:flex-1 md:overflow-auto">
             <div className="divide-y divide-outline-variant/40 md:hidden">
               {invoices.map((row) => (
                 <article
@@ -660,7 +685,7 @@ export function InvoicesPage() {
               ))}
             </div>
 
-            <div className="hidden min-w-0 overflow-x-auto md:block">
+            <div className="hidden min-w-0 md:block">
               <table className="w-full min-w-[800px] border-collapse text-left">
                 <colgroup>
                   <col className="w-[7%]" />
@@ -670,7 +695,7 @@ export function InvoicesPage() {
                   <col className="w-[14%]" />
                   <col className="w-[12%]" />
                 </colgroup>
-                <thead className="sticky top-0 z-10 bg-surface-container">
+                <thead>
                   <tr>
                     {(
                       [
@@ -685,7 +710,7 @@ export function InvoicesPage() {
                       <th
                         key={col.label}
                         title={'title' in col ? col.title : undefined}
-                        className={`whitespace-nowrap border-b border-outline-variant px-gutter py-3 font-label-md text-label-md uppercase text-on-surface-variant ${col.align}`}
+                        className={`sticky top-0 z-10 whitespace-nowrap border-b border-outline-variant bg-surface-container px-gutter py-3 font-label-md text-label-md uppercase text-on-surface-variant ${col.align}`}
                       >
                         {col.label}
                       </th>
@@ -757,7 +782,7 @@ export function InvoicesPage() {
               onClose={handleClosePreview}
               onDownloadSuccess={showDownloadSuccess}
               onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
-              onSend={() => openEmailModal(selected)}
+              onSend={canSendInvoice(selected) ? () => openEmailModal(selected) : undefined}
               paying={payingId === selected.id}
             />
           ) : null}
@@ -783,7 +808,7 @@ export function InvoicesPage() {
               onClose={handleClosePreview}
               onDownloadSuccess={showDownloadSuccess}
               onPay={canPayInvoice(selected) ? () => openPayModal(selected) : undefined}
-              onSend={() => openEmailModal(selected)}
+              onSend={canSendInvoice(selected) ? () => openEmailModal(selected) : undefined}
               paying={payingId === selected.id}
             />
           ) : null}

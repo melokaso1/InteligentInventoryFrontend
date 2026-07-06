@@ -1,19 +1,30 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? ''
-
 import { getToken } from '../hooks/useAuth'
+import { ngrokSkipHeaders as buildNgrokSkipHeaders, NGROK_SKIP_BROWSER_WARNING_HEADER } from '../utils/ngrok'
 import { normalizeJson } from './normalize'
 
-/** Sent on every API request so ngrok tunnels skip the browser interstitial. */
-export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning'
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
+
+if (
+  import.meta.env.PROD &&
+  !API_BASE &&
+  typeof window !== 'undefined' &&
+  window.location.hostname === 'elplonsazo.netlify.app'
+) {
+  console.warn(
+    '[El Plonsazo] VITE_API_URL no está definida en el build de Netlify. ' +
+      'Configura VITE_API_URL o NETLIFY_API_PROXY_URL y vuelve a desplegar. ' +
+      'Ver Frontend/.env.production.example',
+  )
+}
+
+export { NGROK_SKIP_BROWSER_WARNING_HEADER }
 
 export function shouldSendNgrokSkipHeader(): boolean {
-  if (API_BASE.includes('ngrok')) return true
-  if (typeof window !== 'undefined' && window.location.hostname.includes('ngrok')) return true
-  return false
+  return buildNgrokSkipHeaders(API_BASE)[NGROK_SKIP_BROWSER_WARNING_HEADER] === 'true'
 }
 
 export function ngrokSkipHeaders(): Record<string, string> {
-  return shouldSendNgrokSkipHeader() ? { [NGROK_SKIP_BROWSER_WARNING_HEADER]: 'true' } : {}
+  return buildNgrokSkipHeaders(API_BASE)
 }
 
 const FALLBACK_ERROR_MESSAGE = 'Ocurrió un error inesperado.'
@@ -182,7 +193,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     return undefined as T
   }
 
-  const payload: unknown = await response.json()
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new ApiError(API_CONNECTION_ERROR_MESSAGE, response.status)
+  }
   return normalizeJson<T>(payload)
 }
 

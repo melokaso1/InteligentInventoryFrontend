@@ -19,6 +19,9 @@ interface DataTableProps<T> {
   headerClassName?: string
   compact?: boolean
   renderMobileCard?: (row: T, isSelected: boolean) => ReactNode
+  /** When true, skip inner overflow-x wrapper so sticky header works inside a parent scroll container. */
+  embedded?: boolean
+  stickyHeader?: boolean
 }
 
 export function DataTable<T>({
@@ -30,10 +33,14 @@ export function DataTable<T>({
   headerClassName,
   compact = false,
   renderMobileCard,
+  embedded = false,
+  stickyHeader = true,
 }: DataTableProps<T>) {
   const headClass =
     headerClassName ??
-    'bg-surface-container-low border-b border-outline-variant text-on-surface-variant'
+    'border-b border-outline-variant text-on-surface-variant'
+
+  const thStickyClass = stickyHeader ? 'sticky top-0 z-10 bg-surface-container-low' : ''
 
   const visibleColumns = (viewport: 'mobile' | 'desktop') =>
     columns.filter((col) => {
@@ -67,18 +74,22 @@ export function DataTable<T>({
         </div>
       ) : null}
 
-      <div className={`min-w-0 max-w-full overflow-x-auto ${renderMobileCard ? 'hidden md:block' : ''}`}>
+      <div
+        className={`min-w-0 max-w-full ${embedded ? '' : 'overflow-x-auto'} ${
+          renderMobileCard ? 'hidden md:block' : ''
+        }`}
+      >
         <table className="w-full min-w-[640px] border-collapse text-left">
           <thead>
             <tr className={headClass}>
               {visibleColumns('desktop').map((col) => (
                 <th
                   key={col.key}
-                  className={`p-md text-[12px] font-bold uppercase tracking-widest ${
+                  className={`p-md text-[12px] font-bold uppercase tracking-widest ${thStickyClass} ${
                     col.nowrap ? 'whitespace-nowrap' : ''
-                  } ${
-                    col.hideOnTablet ? 'hidden md:table-cell' : ''
-                  } ${col.hideOnMobile ? 'hidden md:table-cell' : ''} ${col.className ?? ''}`}
+                  } ${col.hideOnTablet ? 'hidden md:table-cell' : ''} ${
+                    col.hideOnMobile ? 'hidden md:table-cell' : ''
+                  } ${col.className ?? ''}`}
                 >
                   {col.header}
                 </th>

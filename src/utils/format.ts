@@ -78,6 +78,20 @@ export function getColombiaDateKey(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(date)
 }
 
+/** Formatea fecha y hora ISO en zona Colombia (es-CO). */
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return new Intl.DateTimeFormat('es-CO', {
+    timeZone: 'America/Bogota',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 /** Formatea una fecha ISO a estilo medio en español (Colombia). */
 export function formatDate(iso: string): string {
   if (ISO_DATE_ONLY.test(iso)) {

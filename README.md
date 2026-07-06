@@ -47,13 +47,81 @@ La capa `src/api/` centraliza las llamadas HTTP:
 | `index.ts` | `fetchProducts`, `fetchSales`, `sendChatMessage`, etc. |
 | `normalize.ts` | Convierte respuestas JSON a camelCase antes de mapear a tipos UI |
 
-Variable opcional para producción:
+## Producción (Netlify)
+
+Sitio: **https://elplonsazo.netlify.app/**
+
+El frontend en Netlify es estático. **Login y toda la API requieren un backend .NET accesible desde internet** (por ejemplo con ngrok en desarrollo). `localhost:5151` no es accesible desde los usuarios.
+
+### Configuración en Netlify
+
+1. **Despliega** `Backend/Api` con PostgreSQL y variables `ConnectionStrings:*`, `Jwt:*`.
+2. En Netlify → **Site configuration → Environment variables** (scope **Build**), elige una opción:
+
+| Opción | Variable | Valor |
+|--------|----------|--------|
+| **A — directa (recomendada)** | `VITE_API_URL` | `https://tu-api-publica.ejemplo.com` (sin `/` final) |
+| **B — proxy same-origin** | `NETLIFY_API_PROXY_URL` | Misma URL; deja `VITE_API_URL` vacío |
+
+3. **Redeploy** el sitio (Build & deploy → Trigger deploy).
+
+Detalle completo: `.env.production.example` y `netlify.toml`.
+
+CORS en `Backend/Api/Program.cs` ya permite `https://elplonsazo.netlify.app` (opción A). Con la opción B, el navegador llama a `/api` en Netlify y no necesita CORS hacia la API.
+
+### Verificación
 
 ```bash
+# Sustituye TU_API por tu URL pública
+curl -s -o /dev/null -w "%{http_code}" -X POST https://TU_API/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@elplonsazo.com","password":"..."}'
+# Esperado: 401 (credenciales) o 200 — no 404 ni HTML
+```
+
+Variable opcional para builds locales de producción:
+
+```bash
+# En Netlify → Site settings → Environment variables
 VITE_API_URL=https://tu-api.ejemplo.com
 ```
 
-Si no se define, las rutas usan rutas relativas `/api/...` (proxy en dev o mismo origen en prod).
+Producción: **https://elplonsazo.netlify.app/** — el backend .NET debe permitir ese origen en CORS.
+
+Si no se define `VITE_API_URL`, las rutas usan rutas relativas `/api/...` (proxy en dev). En Netlify debes definir la URL de la API; no hay proxy de `/api` en el hosting estático (solo fallback SPA vía `public/_redirects`).
+
+## ngrok (túnel local opcional)
+
+Para compartir la UI en desarrollo (`ngrok http 5173`):
+
+```bash
+# Terminal 1 — API + chatbot + Vite según Backend/README.md
+cd Frontend && pnpm dev
+
+# Terminal 2 — túnel (dominio free, ej. *.ngrok-free.app)
+ngrok http 5173
+# o, con config de ejemplo en la raíz del monorepo:
+ngrok start el-plonsazo --config ngrok.yml
+```
+
+### Qué hace el proyecto
+
+| Capa | Archivo | Comportamiento |
+|------|---------|----------------|
+| Bootstrap temprano | `index.html` | Parchea `window.fetch` en hosts `*ngrok*` antes de cargar React. |
+| Utilidad | `src/utils/ngrok.ts` | `ngrokSkipHeaders()`, `installNgrokFetchPatch()`. |
+| API | `src/api/client.ts`, `index.ts` | Todas las llamadas HTTP incluyen `ngrok-skip-browser-warning: true`. |
+| Proxy dev | `vite.config.ts` | Reenvía el header al backend .NET en `:5151`. |
+| Carga alternativa | `public/ngrok.html` | Intenta cargar `/` vía `fetch` con header (útil tras aceptar la pantalla de ngrok; **no** evita la primera visita HTML). |
+| Chatbot | `LLMChatBot/app/tools/dotnet_tools.py` | Peticiones a `DOTNET_API_URL` con el mismo header si la URL contiene `ngrok`. |
+
+### Limitaciones (plan gratuito ngrok)
+
+1. **Primera navegación HTML** en un dispositivo nuevo muestra la interstitial **Visit Site**. Los navegadores no permiten enviar headers personalizados en la barra de direcciones; ngrok **prohíbe** inyectar `ngrok-skip-browser-warning` con `traffic_policy` en cuentas free.
+2. Tras pulsar **Visit Site**, ngrok guarda una cookie ~7 días; las peticiones `fetch` y la app funcionan con normalidad.
+3. Si cada demo usa un dispositivo distinto, considera **Cloudflare Tunnel** (`cloudflared tunnel --url http://localhost:5173`) o extensión tipo Requestly que añada el header en `https://*.ngrok-free.app/*`.
+
+Si apuntas `VITE_API_URL` directamente a un túnel ngrok de la API (no al proxy de Vite), el header también se envía automáticamente.
 
 ## Chatbot
 
