@@ -33,7 +33,7 @@ Vite arranca en **http://localhost:5173**. Las peticiones a `/api/*` se reenvía
 
 ```bash
 pnpm build    # TypeScript + bundle en dist/
-pnpm preview  # Sirve la build de producción
+pnpm preview  # Sirve la build local
 pnpm lint     # oxlint
 ```
 
@@ -47,48 +47,29 @@ La capa `src/api/` centraliza las llamadas HTTP:
 | `index.ts` | `fetchProducts`, `fetchSales`, `sendChatMessage`, etc. |
 | `normalize.ts` | Convierte respuestas JSON a camelCase antes de mapear a tipos UI |
 
-## Producción (Netlify)
+En desarrollo, `VITE_API_URL` debe quedar vacío: las rutas usan `/api/...` y el proxy de Vite apunta a `http://127.0.0.1:5151`.
 
-Sitio: **https://elplonsazo.netlify.app/**
+Si el login o el dashboard devuelven **502**, la API .NET no está corriendo en el puerto **5151**.
 
-El frontend en Netlify es estático. **Login y toda la API requieren un backend .NET accesible desde internet** (por ejemplo con ngrok en desarrollo). `localhost:5151` no es accesible desde los usuarios.
+## Arranque del monorepo (local)
 
-### Configuración en Netlify
-
-1. **Despliega** `Backend/Api` con PostgreSQL y variables `ConnectionStrings:*`, `Jwt:*`.
-2. En Netlify → **Site configuration → Environment variables** (scope **Build**), elige una opción:
-
-| Opción | Variable | Valor |
-|--------|----------|--------|
-| **A — directa (recomendada)** | `VITE_API_URL` | `https://tu-api-publica.ejemplo.com` (sin `/` final) |
-| **B — proxy same-origin** | `NETLIFY_API_PROXY_URL` | Misma URL; deja `VITE_API_URL` vacío |
-
-3. **Redeploy** el sitio (Build & deploy → Trigger deploy).
-
-Detalle completo: `.env.production.example` y `netlify.toml`.
-
-CORS en `Backend/Api/Program.cs` ya permite `https://elplonsazo.netlify.app` (opción A). Con la opción B, el navegador llama a `/api` en Netlify y no necesita CORS hacia la API.
-
-### Verificación
+Todo el proyecto corre en local. Solo PostgreSQL usa Docker:
 
 ```bash
-# Sustituye TU_API por tu URL pública
-curl -s -o /dev/null -w "%{http_code}" -X POST https://TU_API/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@elplonsazo.com","password":"..."}'
-# Esperado: 401 (credenciales) o 200 — no 404 ni HTML
+# 1. Base de datos
+cd Backend && docker compose up -d
+
+# 2. API .NET — http://localhost:5151
+cd Backend/Api && dotnet run
+
+# 3. Chatbot (si no arranca solo con Chatbot__AutoStart)
+cd LLMChatBot && python run.py
+
+# 4. Frontend — http://localhost:5173
+cd Frontend && pnpm dev
 ```
 
-Variable opcional para builds locales de producción:
-
-```bash
-# En Netlify → Site settings → Environment variables
-VITE_API_URL=https://tu-api.ejemplo.com
-```
-
-Producción: **https://elplonsazo.netlify.app/** — el backend .NET debe permitir ese origen en CORS.
-
-Si no se define `VITE_API_URL`, las rutas usan rutas relativas `/api/...` (proxy en dev). En Netlify debes definir la URL de la API; no hay proxy de `/api` en el hosting estático (solo fallback SPA vía `public/_redirects`).
+Detalle: `Backend/INSTALACION.md` y `Backend/README.md`.
 
 ## ngrok (túnel local opcional)
 
@@ -98,10 +79,10 @@ Para compartir la UI en desarrollo (`ngrok http 5173`):
 # Terminal 1 — API + chatbot + Vite según Backend/README.md
 cd Frontend && pnpm dev
 
-# Terminal 2 — túnel (dominio free, ej. *.ngrok-free.app)
+# Terminal 2 — túnel
 ngrok http 5173
 # o, con config de ejemplo en la raíz del monorepo:
-ngrok start el-plonsazo --config ngrok.yml
+ngrok start el-plonsazo --config ../ngrok.yml.example
 ```
 
 ### Qué hace el proyecto
@@ -112,14 +93,13 @@ ngrok start el-plonsazo --config ngrok.yml
 | Utilidad | `src/utils/ngrok.ts` | `ngrokSkipHeaders()`, `installNgrokFetchPatch()`. |
 | API | `src/api/client.ts`, `index.ts` | Todas las llamadas HTTP incluyen `ngrok-skip-browser-warning: true`. |
 | Proxy dev | `vite.config.ts` | Reenvía el header al backend .NET en `:5151`. |
-| Carga alternativa | `public/ngrok.html` | Intenta cargar `/` vía `fetch` con header (útil tras aceptar la pantalla de ngrok; **no** evita la primera visita HTML). |
 | Chatbot | `LLMChatBot/app/tools/dotnet_tools.py` | Peticiones a `DOTNET_API_URL` con el mismo header si la URL contiene `ngrok`. |
 
 ### Limitaciones (plan gratuito ngrok)
 
-1. **Primera navegación HTML** en un dispositivo nuevo muestra la interstitial **Visit Site**. Los navegadores no permiten enviar headers personalizados en la barra de direcciones; ngrok **prohíbe** inyectar `ngrok-skip-browser-warning` con `traffic_policy` en cuentas free.
+1. **Primera navegación HTML** en un dispositivo nuevo muestra la interstitial **Visit Site**. Los navegadores no permiten enviar headers personalizados en la barra de direcciones.
 2. Tras pulsar **Visit Site**, ngrok guarda una cookie ~7 días; las peticiones `fetch` y la app funcionan con normalidad.
-3. Si cada demo usa un dispositivo distinto, considera **Cloudflare Tunnel** (`cloudflared tunnel --url http://localhost:5173`) o extensión tipo Requestly que añada el header en `https://*.ngrok-free.app/*`.
+3. Si cada demo usa un dispositivo distinto, considera **Cloudflare Tunnel** (`cloudflared tunnel --url http://localhost:5173`).
 
 Si apuntas `VITE_API_URL` directamente a un túnel ngrok de la API (no al proxy de Vite), el header también se envía automáticamente.
 
@@ -128,19 +108,20 @@ Si apuntas `VITE_API_URL` directamente a un túnel ngrok de la API (no al proxy 
 - `sessionId` persistido en `sessionStorage` (`elplonsazo-chat-session`).
 - `POST /api/chat/message` → proxy .NET → FastAPI.
 - `OperationSummary` se actualiza con `operationSummary` de la respuesta.
+- Invitados entran al chatbot por defecto; el login solo se pide al iniciar sesión o en acciones protegidas.
 
-## Autenticación mock
+## Autenticación
 
-La autenticación del panel sigue siendo simulada con `localStorage`:
+La autenticación es real contra la API .NET (JWT):
 
 | Clave | Descripción |
 |-------|-------------|
-| `erp-auth` | `'true'` cuando hay sesión |
-| `erp-role` | Rol (`admin`) |
-| `erp-users` | Usuarios de registro (JSON) |
+| Token JWT | Guardado tras `POST /api/auth/login` / `register` |
+| Rol | `Admin` o `Cliente` según el usuario |
 
-- **Login** (`/login`): acepta cualquier credencial.
-- Rutas protegidas exigen `erp-auth === 'true'`.
+- **Login** (`/login`): credenciales reales (`admin@elplonsazo.com` / `Admin123!` en desarrollo).
+- Rutas de administración exigen rol **Admin**.
+- Clientes usan chatbot, pedidos y perfil.
 
 ## Tema claro / oscuro
 
@@ -148,18 +129,19 @@ Persistido en `localStorage` (`erp-theme`: `light` | `dark`). El toggle aplica l
 
 ## Rutas
 
-| Ruta | Página | Datos |
-|------|--------|-------|
-| `/` | Dashboard | API |
-| `/products` | Productos | API |
-| `/inventory` | Inventario | API |
-| `/sales` | Ventas | API |
-| `/invoices` | Facturas | API |
-| `/chatbot` | Chatbot | API + proxy chat |
-| `/reports` | Reportes | Mock |
-| `/support` | Soporte | Mock |
-
-Rutas públicas: `/login`, `/register`.
+| Ruta | Página | Acceso |
+|------|--------|--------|
+| `/` | Redirige al home según rol | Público / autenticado |
+| `/chatbot` | Chatbot (inicio para invitados) | Público |
+| `/products` | Productos | Admin |
+| `/inventory` | Inventario | Admin |
+| `/sales` | Ventas | Admin |
+| `/dispatch` | Despacho | Admin |
+| `/invoices` | Facturas | Admin |
+| `/reports` | Reportes | Admin |
+| `/my-orders` | Mis pedidos | Cliente |
+| `/settings` | Configuración | Autenticado |
+| `/login`, `/register` | Auth | Público |
 
 ## Estructura
 
@@ -170,13 +152,11 @@ src/
 ├── components/
 │   ├── auth/        # ProtectedRoute
 │   ├── chat/        # Mensajes, input, resumen de operación
-│   ├── layout/      # AppLayout, Sidebar, Header
+│   ├── layout/      # AppLayout, Sidebar, Header, UserMenu
 │   └── ui/          # DataTable, Modal, KpiCard, etc.
-├── data/
-│   └── mock.ts      # Solo Reports/Support (referencia)
-├── hooks/           # useAuth, useTheme, useSidebar
+├── hooks/           # useAuth, useTheme, useSidebar, useNotifications
 ├── types/           # Tipos compartidos
-├── utils/           # format.ts (COP)
+├── utils/           # format.ts (COP), ngrok, a11y
 ├── App.tsx
 └── main.tsx
 ```
@@ -186,5 +166,5 @@ Montos en **pesos colombianos (COP)** — ver `src/utils/format.ts`.
 ## Notas
 
 - Diseño basado en mockups **Google Stitch** (*Executive Precision*).
-- `design/` se ignora en el watch de Vite.
 - Proyecto académico: panel admin funcional con backend real para el taller SmartInventory AI.
+- **No hay despliegue en Netlify ni en la nube**: el entorno previsto es local (Docker solo para PostgreSQL).

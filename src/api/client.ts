@@ -4,19 +4,6 @@ import { normalizeJson } from './normalize'
 
 const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 
-if (
-  import.meta.env.PROD &&
-  !API_BASE &&
-  typeof window !== 'undefined' &&
-  window.location.hostname === 'elplonsazo.netlify.app'
-) {
-  console.warn(
-    '[El Plonsazo] VITE_API_URL no está definida en el build de Netlify. ' +
-      'Configura VITE_API_URL o NETLIFY_API_PROXY_URL y vuelve a desplegar. ' +
-      'Ver Frontend/.env.production.example',
-  )
-}
-
 export { NGROK_SKIP_BROWSER_WARNING_HEADER }
 
 export function shouldSendNgrokSkipHeader(): boolean {
